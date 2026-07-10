@@ -1495,11 +1495,13 @@ function buildFilteredDashboardData(data, filters) {
 
 function buildFilteredReport(report, filters) {
   const filteredReport = filterReportDetails(report, filters);
-  if (!hasDimensionFilters(filters)) {
+  const dateCoverage = getReportDateCoverage(report, filters);
+  const needsAggregateRecalc = hasDimensionFilters(filters) || dateCoverage.ratio < 0.999;
+  if (!needsAggregateRecalc) {
     return filteredReport;
   }
 
-  return applyFilteredReportAggregates(report, filteredReport);
+  return applyFilteredReportAggregates(report, filteredReport, dateCoverage);
 }
 
 function buildEmptySummary() {
@@ -1630,27 +1632,36 @@ function combineReportsClient(reports) {
   };
 }
 
-function applyFilteredReportAggregates(sourceReport, filteredReport) {
+function applyFilteredReportAggregates(sourceReport, filteredReport, dateCoverage) {
   const sourceAssetBase = assetRowsBase(sourceReport.assets);
   const filteredAssetBase = assetRowsBase(filteredReport.assets);
-  const ratio = sourceAssetBase === 0 ? 0 : filteredAssetBase / sourceAssetBase;
+  const dimensionRatio = sourceAssetBase === 0 ? 1 : filteredAssetBase / sourceAssetBase;
+  const flowRatio = dimensionRatio * dateCoverage.ratio;
   const portfolioValue = round2(filteredAssetBase);
-  const startValue = round2(Number(sourceReport.metrics?.startValue || 0) * ratio);
-  const endValue = portfolioValue || round2(Number(sourceReport.metrics?.endValue || 0) * ratio);
-  const pnl = round2(Number(sourceReport.metrics?.pnl || 0) * ratio);
-  const portfolioChange = round2(Number(sourceReport.portfolioChange || 0) * ratio);
-  const deposits = round2(Number(sourceReport.depositsAndWithdrawals || 0) * ratio);
-  const netCashFlow = round2(Number(sourceReport.metrics?.netCashFlow || 0) * ratio);
-  const weightedCashFlow = round2(Number(sourceReport.metrics?.weightedCashFlow || 0) * ratio);
-  const coupons = filteredMoneyRowsTotal(sourceReport.incomeRows, filteredReport.incomeRows, sourceReport.couponsAndDividends, ratio, 1);
-  const commissions = filteredMoneyRowsTotal(sourceReport.commissionRows, filteredReport.commissionRows, sourceReport.commissionsAndTaxes, ratio, -1);
+  const startValue = round2(Number(sourceReport.metrics?.startValue || 0) * dimensionRatio);
+  const endValue = portfolioValue || round2(Number(sourceReport.metrics?.endValue || 0) * dimensionRatio);
+  const pnl = round2(Number(sourceReport.metrics?.pnl || 0) * flowRatio);
+  const portfolioChange = round2(Number(sourceReport.portfolioChange || 0) * flowRatio);
+  const deposits = round2(Number(sourceReport.depositsAndWithdrawals || 0) * flowRatio);
+  const netCashFlow = round2(Number(sourceReport.metrics?.netCashFlow || 0) * flowRatio);
+  const weightedCashFlow = round2(Number(sourceReport.metrics?.weightedCashFlow || 0) * flowRatio);
+  const coupons = filteredMoneyRowsTotal(sourceReport.incomeRows, filteredReport.incomeRows, sourceReport.couponsAndDividends, flowRatio, 1);
+  const commissions = filteredMoneyRowsTotal(sourceReport.commissionRows, filteredReport.commissionRows, sourceReport.commissionsAndTaxes, flowRatio, -1);
   const assetChange = round2(portfolioChange - coupons - commissions - deposits);
   const roi = startValue === 0 ? 0 : pnl / startValue * 100;
   const mwrBase = startValue + weightedCashFlow;
   const mwr = mwrBase === 0 ? 0 : pnl / mwrBase * 100;
+  const partialDateStatus = dateCoverage.ratio < 0.999
+    ? `Файл пересчитан под выбранный период ${shortDate(dateCoverage.start)} - ${shortDate(dateCoverage.end)}. Суммы без точных дат распределены пропорционально дням периода.`
+    : filteredReport.periodStatus;
 
   return {
     ...filteredReport,
+    period: dateCoverage.ratio < 0.999 ? `Фильтр: ${shortDate(dateCoverage.start)} - ${shortDate(dateCoverage.end)}` : filteredReport.period,
+    periodStart: dateCoverage.start || filteredReport.periodStart,
+    periodEnd: dateCoverage.end || filteredReport.periodEnd,
+    periodDays: dateCoverage.days || filteredReport.periodDays,
+    periodStatus: partialDateStatus,
     portfolioValue,
     portfolioChange,
     couponsAndDividends: coupons,
@@ -1682,6 +1693,40 @@ function hasDimensionFilters(filters) {
   const allClassesSelected = selectedClasses.length === ASSET_CLASS_OPTIONS.length
     && ASSET_CLASS_OPTIONS.every(([id]) => selectedClasses.includes(id));
   return !allClassesSelected || selectedIndustries.length > 0;
+}
+
+function getReportDateCoverage(report, filters) {
+  const reportStart = report.periodStart || report.periodEnd || "";
+  const reportEnd = report.periodEnd || report.periodStart || "";
+  if (!reportStart || !reportEnd) {
+    return { ratio: 1, start: reportStart, end: reportEnd, days: Number(report.periodDays || 0) };
+  }
+
+  const start = maxIsoDate(reportStart, filters.dateFrom || reportStart);
+  const end = minIsoDate(reportEnd, filters.dateTo || reportEnd);
+  const totalDays = inclusiveIsoDays(reportStart, reportEnd) || Number(report.periodDays || 0) || 1;
+  const overlapDays = Math.max(0, inclusiveIsoDays(start, end));
+  const ratio = overlapDays === 0 ? 0 : Math.min(1, overlapDays / totalDays);
+  return { ratio, start, end, days: overlapDays };
+}
+
+function maxIsoDate(left, right) {
+  if (!left) return right || "";
+  if (!right) return left || "";
+  return left >= right ? left : right;
+}
+
+function minIsoDate(left, right) {
+  if (!left) return right || "";
+  if (!right) return left || "";
+  return left <= right ? left : right;
+}
+
+function inclusiveIsoDays(start, end) {
+  const startDate = parseIsoDate(start);
+  const endDate = parseIsoDate(end);
+  if (!startDate || !endDate || endDate < startDate) return 0;
+  return Math.floor((endDate - startDate) / 86400000) + 1;
 }
 
 function assetRowsBase(rows) {
