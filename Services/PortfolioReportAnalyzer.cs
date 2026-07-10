@@ -377,23 +377,23 @@ public static partial class PortfolioReportAnalyzer
         var incomeRows = ExtractRows(rows, static text => text.Contains("купон", StringComparison.OrdinalIgnoreCase), 30)
             .Where(x => DateRegex().IsMatch(x.Subtitle))
             .ToList();
-        var expectedIncomeRows = ExtractSectionRows(rows, "1.4. Предполагаемый к зачислению доход", "2.1. Сделки", 30)
-            .Where(x => !x.Title.Contains("Итого", StringComparison.OrdinalIgnoreCase))
-            .Select(x => x with
-            {
-                Value = PickColumnValue(x.Columns,
-                    "Предполагаемая сумма зачисления в валюте выплаты",
-                    "Начисленная сумма")
-            })
-            .ToList();
+        var expectedIncomeRows = ExtractExpectedIncomeRows(rows);
         var commissionRows = ExtractRows(rows, static text => text.Contains("комисси", StringComparison.OrdinalIgnoreCase)
                                                              || text.Contains("налог", StringComparison.OrdinalIgnoreCase), 30)
-            .Where(x => DateRegex().IsMatch(x.Subtitle))
+            .Where(x => DateRegex().IsMatch(x.Subtitle)
+                        || x.Title.Contains("Комиссия", StringComparison.OrdinalIgnoreCase)
+                        || x.Subtitle.Contains("Комиссия", StringComparison.OrdinalIgnoreCase))
+            .Where(x => !x.Title.Contains("Итого", StringComparison.OrdinalIgnoreCase))
             .GroupBy(x => $"{x.Title}:{Math.Abs(x.Value)}", StringComparer.OrdinalIgnoreCase)
             .Select(x => x.First())
             .ToList();
-        var trades = ExtractSectionRows(rows, "2.1. Сделки", "Займы", 40);
+        var trades = ExtractSectionRows(rows, "2.1. Сделки", "Займы", 40)
+            .Concat(ExtractRows(rows, static text => text.Contains("Покупка/Продажа", StringComparison.OrdinalIgnoreCase), 20))
+            .GroupBy(x => $"{x.Title}:{x.Subtitle}:{Math.Abs(x.Value)}", StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.First())
+            .ToList();
         var assets = ExtractAssetRows(rows);
+        var diagnostics = BuildDiagnostics(fileName, rows, assets, trades, incomeRows, expectedIncomeRows, commissionRows);
 
         var coupons = SumPositive(incomeRows);
         var commissions = -Math.Abs(SumAbsolute(commissionRows));
@@ -425,7 +425,124 @@ public static partial class PortfolioReportAnalyzer
             incomeRows,
             expectedIncomeRows,
             commissionRows,
-            rows.Take(80).Select(x => (IReadOnlyList<string>)x.Cells.Select(c => c.Display).ToList()).ToList());
+            rows.Take(80).Select(x => (IReadOnlyList<string>)x.Cells.Select(c => c.Display).ToList()).ToList(),
+            diagnostics);
+    }
+
+    private static ReportDiagnostics BuildDiagnostics(
+        string fileName,
+        IReadOnlyList<RowData> rows,
+        params IReadOnlyList<DetailRow>[] recognizedGroups)
+    {
+        var recognizedRows = recognizedGroups.Sum(x => x.Count);
+        var recognizedTitles = recognizedGroups
+            .SelectMany(x => x)
+            .Select(x => x.Title)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var candidateRows = rows
+            .Where(row => IsDiagnosticCandidateRow(row, rows))
+            .ToList();
+        var skippedRows = candidateRows
+            .Where(row => !recognizedTitles.Any(title => row.Text.Contains(title, StringComparison.OrdinalIgnoreCase)))
+            .Take(12)
+            .Select(row => new ProcessingIssue(
+                "warning",
+                "row",
+                fileName,
+                row.Index + 1,
+                $"Строка похожа на табличные данные, но не попала в активы, сделки, доходы или комиссии: {TrimForIssue(row.Text)}"))
+            .ToList();
+
+        var issues = new List<ProcessingIssue>();
+        if (recognizedRows == 0)
+        {
+            issues.Add(new ProcessingIssue(
+                "warning",
+                "file",
+                fileName,
+                null,
+                "В файле не удалось уверенно распознать активы, сделки, доходы или комиссии."));
+        }
+
+        issues.AddRange(skippedRows);
+        return new ReportDiagnostics(
+            rows.Count,
+            recognizedRows,
+            Math.Max(0, candidateRows.Count - recognizedRows),
+            issues);
+    }
+
+    private static string TrimForIssue(string text)
+    {
+        var normalized = Regex.Replace(text, "\\s+", " ").Trim();
+        return normalized.Length <= 180 ? normalized : $"{normalized[..180]}…";
+    }
+
+    private static bool IsDiagnosticCandidateRow(RowData row, IReadOnlyList<RowData> rows)
+    {
+        if (row.Cells.Count(cell => !string.IsNullOrWhiteSpace(cell.Display)) < 4 || !row.Cells.Any(cell => cell.Number.HasValue))
+        {
+            return false;
+        }
+
+        var text = row.Text.Trim();
+        if (IsAggregateOrUnsupportedDiagnosticRow(text))
+        {
+            return false;
+        }
+
+        if (HasNearbySectionMarker(rows, row.Index, "Займы")
+            || HasNearbySectionMarker(rows, row.Index, "Овернайт")
+            || HasNearbySectionMarker(rows, row.Index, "Портфель по ценным бумагам")
+            || HasNearbySectionMarker(rows, row.Index, "Предполагаемый к зачислению доход")
+            || HasNearbySectionMarker(rows, row.Index, "Движение Ценных бумаг"))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsAggregateOrUnsupportedDiagnosticRow(string text)
+    {
+        return text.Contains("Итого", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("Портфель по ценным бумагам", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("Стоимость портфеля", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("Обязательства клиента", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("Дата составления отчета", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("Курсы валют", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("Вид актива", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("Торговый раздел", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("Блокированный раздел", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("Основной раздел", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasNearbySectionMarker(IReadOnlyList<RowData> rows, int rowIndex, string marker)
+    {
+        return rows
+            .Where(row => row.Index < rowIndex && row.Index >= rowIndex - 60)
+            .Any(row => row.Text.Contains(marker, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static IReadOnlyList<DetailRow> ExtractExpectedIncomeRows(IReadOnlyList<RowData> rows)
+    {
+        var extracted = ExtractSectionRows(rows, "1.4. Предполагаемый к зачислению доход", "2.1. Сделки", 30);
+        if (extracted.Count == 0)
+        {
+            extracted = ExtractSectionRows(rows, "Предполагаемый к зачислению доход", "Курсы валют", 30);
+        }
+
+        return extracted
+            .Where(x => !x.Title.Contains("Итого", StringComparison.OrdinalIgnoreCase))
+            .Select(x => x with
+            {
+                Value = PickColumnValue(x.Columns,
+                    "Предполагаемая сумма зачисления в валюте выплаты",
+                    "Начисленная сумма")
+            })
+            .Where(x => x.Value != 0m)
+            .ToList();
     }
 
     private static InvestmentMetrics BuildMetrics(decimal endValue, decimal totalValueChange, decimal netCashFlow, decimal weightedCashFlow)

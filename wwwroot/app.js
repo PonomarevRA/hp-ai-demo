@@ -556,6 +556,66 @@ const ARCHITECTURE_LINKS = [
   ["ai", "ops"],
 ];
 
+const MCP_ARCHITECTURE_SECTIONS = [
+  {
+    id: "mcp-server",
+    title: "Что такое MCP server",
+    subtitle: "Простыми словами: это безопасный переходник между ИИ-агентом и конкретным источником данных.",
+    request: ["Пользователь", "ChatGPT / Claude", "MCP client", "MCP server", "Источник данных"],
+    exampleText: "Проверь по MOEX актуальную котировку SBER и объясни, влияет ли она на оценку позиции.",
+    tools: [
+      "moex.searchSecurity({ query: 'Сбербанк' })",
+      "moex.getSecurityQuote({ secId: 'SBER', date: '2026-07-10' })",
+      "portfolio.recalculatePosition({ secId: 'SBER', price: 312.45 })",
+    ],
+    explanation: "Агент не ходит в базу или API напрямую. Он вызывает понятный tool, MCP server проверяет входные параметры, обращается к источнику и возвращает структурированный ответ.",
+  },
+  {
+    id: "mcp-gateway",
+    title: "Что такое MCP gateway",
+    subtitle: "Когда MCP серверов много, gateway становится диспетчером: выбирает нужный сервер и применяет общие правила доступа.",
+    request: ["Агент", "MCP gateway", "MOEX MCP", "BCS docs MCP", "Portfolio MCP", "Audit log"],
+    exampleText: "Сравни расчет MWR с документацией BCS, проверь котировки MOEX и сохрани trace ответа.",
+    tools: [
+      "bcsDocs.findFormula({ metric: 'MWR' })",
+      "moex.getHistoricalQuote({ secId: 'GAZP', date: '2025-12-31' })",
+      "portfolio.getMetrics({ period: '2025' })",
+      "audit.writeEvent({ type: 'agent_answer_prepared' })",
+    ],
+    explanation: "Gateway скрывает сложность: агент видит единый каталог tools, а внутри запрос маршрутизируется в нужный MCP server с логированием, лимитами и правами.",
+  },
+  {
+    id: "mcp-tools",
+    title: "Что такое tools внутри MCP",
+    subtitle: "Tool — это не магия, а обычная функция с названием, описанием, схемой входа и проверяемым ответом.",
+    request: ["Agent prompt", "Tool schema", "Tool call", "Validated result", "Final answer"],
+    exampleText: "Найди комиссии за период и объясни, почему fee drag вырос.",
+    tools: [
+      "portfolio.getCommissions({ dateFrom: '2026-01-01', dateTo: '2026-06-30' })",
+      "portfolio.getFeeDrag({ period: 'YTD' })",
+      "portfolio.getSourceRows({ section: 'commissions' })",
+    ],
+    explanation: "Хороший tool ограничивает свободу агента: он не придумывает поля, не парсит Excel заново и получает только те данные, которые сервис разрешил выдать.",
+  },
+];
+
+const AI_ARCHITECTURE_CONTEXT = {
+  purpose: "Machine-readable context for AI agents reading the architecture page.",
+  audience: "People who do not understand AI infrastructure yet.",
+  keyMessages: [
+    "MCP server is an adapter between an AI agent and one concrete system or data source.",
+    "MCP gateway is a routing and governance layer for many MCP servers.",
+    "Tools are typed functions exposed by MCP servers; agents call tools instead of guessing from raw files.",
+    "Portfolio calculations should remain deterministic in backend services; AI should explain verified results.",
+  ],
+  examples: MCP_ARCHITECTURE_SECTIONS.map((section) => ({
+    id: section.id,
+    title: section.title,
+    userText: section.exampleText,
+    toolExamples: section.tools,
+  })),
+};
+
 const INFO_ANTI_PATTERNS = [
   {
     title: "Отправлять весь Excel в ИИ каждый раз",
@@ -840,6 +900,13 @@ function buildAiAgentContext(data, report, screen, activeReport) {
       failedSymbols: data.marketData.failedSymbols || [],
       quotes: (data.marketData.quotes || []).slice(0, 20),
     } : null,
+    processing: data?.processing ? {
+      filesReceived: Number(data.processing.filesReceived || 0),
+      filesProcessed: Number(data.processing.filesProcessed || 0),
+      filesFailed: Number(data.processing.filesFailed || 0),
+      files: data.processing.files || [],
+      issues: (data.processing.issues || []).slice(0, 50),
+    } : null,
     summary: summary ? {
       portfolioValueRub: Number(summary.portfolioValue || 0),
       portfolioChangeRub: Number(summary.portfolioChange || 0),
@@ -920,7 +987,10 @@ function App() {
   const [data, setData] = useState(null);
   const [activeReport, setActiveReport] = useState(-1);
   const [reportFilters, setReportFilters] = useState(DEFAULT_REPORT_FILTERS);
+  const [uploadStatus, setUploadStatus] = useState(null);
   const [formulaKey, setFormulaKey] = useState(null);
+  const [marketDataDetailsOpen, setMarketDataDetailsOpen] = useState(false);
+  const [issuesExpanded, setIssuesExpanded] = useState(false);
   const hashScreen = location.hash.replace("#", "");
   const initialScreen = ["v1", "v2", "v3", "scale", "history", "agents", "ops", "architecture"].includes(hashScreen) ? hashScreen : "home";
   const [screen, setScreen] = useState(initialScreen);
@@ -932,20 +1002,54 @@ function App() {
 
   async function upload(files) {
     if (!files.length) return;
+    const selectedFiles = Array.from(files).map((file) => ({ name: file.name, size: file.size }));
     setLoading(true);
     setError("");
+    setIssuesExpanded(false);
+    setUploadStatus({
+      phase: "uploading",
+      message: `Загружаю ${selectedFiles.length} файл(а) на локальный backend.`,
+      files: selectedFiles,
+      processing: null,
+    });
     const form = new FormData();
     Array.from(files).forEach((file) => form.append("files", file));
 
     try {
+      setUploadStatus((current) => ({
+        ...current,
+        phase: "processing",
+        message: "Файлы переданы. Backend разбирает Excel, считает метрики и запрашивает MOEX ISS.",
+      }));
       const response = await fetch("/api/analyze", { method: "POST", body: form });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Не удалось разобрать отчет");
+      if (!response.ok) {
+        setUploadStatus((current) => ({
+          ...current,
+          phase: "error",
+          message: payload.error || "Не удалось разобрать отчет",
+          processing: payload.processing || null,
+        }));
+        throw new Error(payload.error || "Не удалось разобрать отчет");
+      }
       setData(payload);
       setActiveReport(-1);
       setReportFilters(DEFAULT_REPORT_FILTERS);
+      setUploadStatus((current) => ({
+        ...current,
+        phase: payload.processing?.issues?.length ? "warning" : "done",
+        message: payload.processing?.issues?.length
+          ? "Файлы обработаны, но есть предупреждения по строкам."
+          : "Файлы успешно обработаны.",
+        processing: payload.processing || null,
+      }));
     } catch (err) {
       setError(err.message);
+      setUploadStatus((current) => current?.phase === "error" ? current : ({
+        ...current,
+        phase: "error",
+        message: err.message,
+      }));
     } finally {
       setLoading(false);
     }
@@ -954,29 +1058,42 @@ function App() {
   const filteredData = data ? buildFilteredDashboardData(data, reportFilters) : null;
   const report = filteredData ? getActiveReport(filteredData, activeReport) : null;
   const openFormula = (key) => setFormulaKey(key);
+  function showProcessingIssues() {
+    setIssuesExpanded(true);
+    requestAnimationFrame(() => {
+      document.getElementById("processing-issues-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
 
   return h("main", { className: `shell screen-${screen}` },
     h(AiAgentContext, { data: filteredData, report, screen, activeReport }),
     h(Topbar, { data: filteredData, loading, upload, screen, go }),
-    h(MarketDataWarning, { marketData: filteredData?.marketData }),
+    h(MarketDataWarning, { marketData: filteredData?.marketData, openDetails: () => setMarketDataDetailsOpen(true) }),
+    h(UploadStatusPanel, { status: uploadStatus, processing: filteredData?.processing, showIssues: showProcessingIssues }),
     screen === "home" && h(Home, { data: filteredData, error, loading, upload, go }),
     screen === "v1" && h(VersionFrame, { title: "V1 · банковская аналитика", go },
       filteredData && report
         ? h(DashboardV1, { data: filteredData, sourceData: data, report, activeReport, setActiveReport, openFormula, reportFilters, setReportFilters })
-        : h(EmptyState, { error, loading, upload })
+        : h(EmptyState, { error, loading, upload, variant: "v1" })
     ),
     screen === "v2" && h(VersionFrame, { title: "V2 · investor cockpit", go },
       filteredData && report
         ? h(DashboardV2, { data: filteredData, sourceData: data, report, activeReport, setActiveReport, openFormula, reportFilters, setReportFilters })
-        : h(EmptyState, { error, loading, upload })
+        : h(EmptyState, { error, loading, upload, variant: "v2" })
     ),
     screen === "v3" && h(VersionFrame, { title: "V3 · metric lab", go },
       filteredData && report
         ? h(DashboardV3, { data: filteredData, sourceData: data, report, activeReport, setActiveReport, openFormula, reportFilters, setReportFilters })
-        : h(EmptyState, { error, loading, upload })
+        : h(EmptyState, { error, loading, upload, variant: "v3" })
     ),
     INFO_PAGES[screen] && h(InfoPage, { page: INFO_PAGES[screen], pageKey: screen, go, openFormula }),
-    formulaKey && h(FormulaModal, { formulaKey, close: () => setFormulaKey(null) })
+    h(ProcessingIssuesPanel, {
+      processing: filteredData?.processing || uploadStatus?.processing,
+      expanded: issuesExpanded,
+      setExpanded: setIssuesExpanded,
+    }),
+    formulaKey && h(FormulaModal, { formulaKey, close: () => setFormulaKey(null) }),
+    marketDataDetailsOpen && h(MarketDataModal, { marketData: filteredData?.marketData, close: () => setMarketDataDetailsOpen(false) })
   );
 }
 
@@ -1004,18 +1121,106 @@ function Topbar({ data, loading, upload, screen, go }) {
   );
 }
 
-function MarketDataWarning({ marketData }) {
+function MarketDataWarning({ marketData, openDetails }) {
   if (!marketData?.requested || (marketData.available && !marketData.isPartial)) {
     return null;
   }
 
   const title = marketData.message || "Актуальные котировки MOEX ISS не удалось получить";
-  return h("div", {
+  return h("button", {
     className: `marketDataWarning ${marketData.available ? "partial" : "failed"}`,
     title,
+    onClick: openDetails,
     "aria-label": title,
     "data-ai-market-data-warning": "true",
   }, "!");
+}
+
+function UploadStatusPanel({ status, processing, showIssues }) {
+  if (!status) return null;
+  const effectiveProcessing = processing || status.processing;
+  const issueCount = effectiveProcessing?.issues?.length || 0;
+  return h("section", { className: `uploadStatusPanel ${status.phase}`, "data-ai-upload-status": status.phase },
+    h("div", { className: "uploadStatusHeader" },
+      h("span", { className: "uploadStatusDot" }),
+      h("div", null,
+        h("strong", null, uploadStatusTitle(status.phase)),
+        h("p", null, status.message)
+      )
+    ),
+    status.files?.length > 0 && h("div", { className: "uploadFileList" },
+      status.files.map((file) => h("span", { key: `${file.name}-${file.size}` }, `${file.name} · ${formatFileSize(file.size)}`))
+    ),
+    effectiveProcessing && h("div", { className: "uploadProcessingSummary" },
+      h("span", null, `Получено файлов: ${effectiveProcessing.filesReceived}`),
+      h("span", null, `Обработано: ${effectiveProcessing.filesProcessed}`),
+      h("span", null, `Ошибок: ${effectiveProcessing.filesFailed}`),
+      h("button", {
+        className: "uploadIssuesLink",
+        type: "button",
+        disabled: issueCount === 0,
+        onClick: issueCount > 0 ? showIssues : undefined,
+      }, `Предупреждений: ${issueCount}`)
+    )
+  );
+}
+
+function uploadStatusTitle(phase) {
+  return {
+    uploading: "Загрузка файлов",
+    processing: "Обработка отчетов",
+    done: "Готово",
+    warning: "Готово с предупреждениями",
+    error: "Ошибка обработки",
+  }[phase] || "Статус загрузки";
+}
+
+function ProcessingIssuesPanel({ processing, expanded, setExpanded }) {
+  const issues = processing?.issues || [];
+  const failedFiles = (processing?.files || []).filter((file) => !file.success);
+  if (!issues.length && !failedFiles.length) return null;
+
+  return h("section", {
+    id: "processing-issues-panel",
+    className: `processingIssuesPanel ${expanded ? "expanded" : "collapsed"}`,
+    "data-ai-processing-issues": "true",
+    "data-ai-expanded": String(expanded),
+  },
+    h("div", { className: "panelTitle" },
+      h("div", null,
+        h("h3", null, "Что не удалось загрузить и обработать"),
+        h("span", null, expanded ? "Диагностика по файлам и строкам Excel" : "Свернуто. Нажмите, чтобы увидеть детали.")
+      ),
+      h("button", {
+        className: "processingIssuesToggle",
+        type: "button",
+        onClick: () => setExpanded(!expanded),
+        "aria-expanded": String(expanded),
+      }, expanded ? "Свернуть" : `Развернуть · ${issues.length + failedFiles.length}`)
+    ),
+    expanded && failedFiles.length > 0 && h("div", { className: "processingIssueGroup" },
+      h("strong", null, "Файлы с ошибками"),
+      failedFiles.map((file) => h("div", { className: "processingIssue error", key: file.fileName },
+        h("b", null, file.fileName),
+        h("span", null, file.message)
+      ))
+    ),
+    expanded && issues.length > 0 && h("div", { className: "processingIssueGroup" },
+      h("strong", null, "Строки и предупреждения"),
+      issues.slice(0, 30).map((issue, index) => h("div", { className: `processingIssue ${issue.severity}`, key: `${issue.fileName}-${issue.rowIndex}-${index}` },
+        h("b", null, `${issue.fileName}${issue.rowIndex ? ` · строка ${issue.rowIndex}` : ""}`),
+        h("span", null, issue.message)
+      )),
+      issues.length > 30 && h("small", null, `Показаны первые 30 из ${issues.length}. Остальные доступны в JSON ответа API.`)
+    )
+  );
+}
+
+function formatFileSize(bytes) {
+  const size = Number(bytes || 0);
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${plain.format(size / 1024)} KB`;
+  return `${plain.format(size / 1024 / 1024)} MB`;
 }
 
 function UploadButton({ loading, upload, compact = false }) {
@@ -1038,6 +1243,13 @@ function UploadButton({ loading, upload, compact = false }) {
 
 function Home({ data, error, loading, upload, go }) {
   const summary = data?.summary;
+  const sampleMetrics = {
+    portfolioValue: 1_250_000,
+    pnl: 84_200,
+    roi: 7.18,
+    mwr: 7.05,
+    twr: 6.92,
+  };
   return h("section", { className: "homeHero" },
     h("div", { className: "homeIntro" },
       h("div", { className: "homeIntroIcon" }, h(Icon, { name: "pulse" })),
@@ -1052,9 +1264,9 @@ function Home({ data, error, loading, upload, go }) {
       error && h("p", { className: "error" }, error)
     ),
     h("div", { className: "homePreview" },
-      h("div", { className: "portfolioTicker" },
-        h("span", null, "Стоимость портфеля"),
-        h("strong", null, summary ? formatRub(summary.portfolioValue) : "—")
+      h("div", { className: `portfolioTicker ${summary ? "" : "sample"}` },
+        h("span", null, summary ? "Стоимость портфеля" : "Пример данных · загрузите Excel для реального расчета"),
+        h("strong", null, summary ? formatRub(summary.portfolioValue) : formatRub(sampleMetrics.portfolioValue))
       ),
       h("div", { className: "designCards" },
         h(DesignCard, {
@@ -1064,7 +1276,7 @@ function Home({ data, error, loading, upload, go }) {
           metrics: data ? [
             ["PnL", signedRub(summary.metrics.pnl)],
             ["ROI", formatPercent(summary.metrics.roi)],
-          ] : [["Фокус", "разбор отчета"]],
+          ] : [["Пример PnL", signedRub(sampleMetrics.pnl)], ["Пример ROI", formatPercent(sampleMetrics.roi)]],
           onClick: () => go("v1"),
         }),
         h(DesignCard, {
@@ -1074,7 +1286,7 @@ function Home({ data, error, loading, upload, go }) {
           metrics: data ? [
             ["MWR", formatPercent(summary.metrics.mwr)],
             ["Активы", signedRub(summary.assetChange)],
-          ] : [["Фокус", "доходность"]],
+          ] : [["Пример MWR", formatPercent(sampleMetrics.mwr)], ["Пример активов", signedRub(42_100)]],
           onClick: () => go("v2"),
           featured: true,
         }),
@@ -1085,7 +1297,7 @@ function Home({ data, error, loading, upload, go }) {
           metrics: data ? [
             ["TWR", formatPercent(summary.advancedMetrics.twr)],
             ["Max DD", formatPercent(summary.advancedMetrics.maxDrawdown)],
-          ] : [["Фокус", "сценарии"]],
+          ] : [["Пример TWR", formatPercent(sampleMetrics.twr)], ["Пример DD", formatPercent(-3.4)]],
           onClick: () => go("v3"),
         })
       ),
@@ -1160,7 +1372,11 @@ function InfoPage({ page, pageKey, go, openFormula }) {
       )
     ),
     isArchitecture
-      ? h(ArchitectureBlueprint, null)
+      ? [
+          h(ArchitectureBlueprint, { key: "blueprint" }),
+          h(McpArchitectureSections, { key: "mcp-sections" }),
+          h(AgentReadableArchitectureContext, { key: "ai-architecture-context" })
+        ]
       : h(PageDiagram, { page, pageKey, activeStep, setActiveStep }),
     h("div", { className: "infoLayout" },
       h("div", { className: "infoCardGrid" },
@@ -1300,6 +1516,53 @@ function ArchitectureBlueprint() {
         h("p", null, active.why)
       )
     )
+  );
+}
+
+function McpArchitectureSections() {
+  return h("section", { className: "mcpArchitecture", "data-ai-section": "mcp-explained" },
+    h("div", { className: "mcpIntro" },
+      h("p", { className: "eyebrow" }, "mcp for humans"),
+      h("h2", null, "Как ИИ-агент безопасно получает данные через MCP"),
+      h("p", null, "Ниже три базовых блока без технического жаргона: MCP server, MCP gateway и tools. Их задача — не дать агенту гадать, а дать ему проверяемые функции и источники.")
+    ),
+    MCP_ARCHITECTURE_SECTIONS.map((section) => h("article", {
+      className: "mcpBlock",
+      key: section.id,
+      "data-ai-mcp-block": section.id,
+    },
+      h("div", { className: "mcpBlockText" },
+        h("span", null, section.subtitle),
+        h("h3", null, section.title),
+        h("p", null, section.explanation),
+        h("div", { className: "mcpExampleText" },
+          h("strong", null, "Пример запроса пользователя"),
+          h("p", null, `“${section.exampleText}”`)
+        )
+      ),
+      h("div", { className: "mcpRequestScheme" },
+        h("div", { className: "mcpSchemeLine" },
+          section.request.map((step, index) => h("div", { className: "mcpSchemeStep", key: `${section.id}-${step}` },
+            h("b", null, index + 1),
+            h("span", null, step)
+          ))
+        ),
+        h("div", { className: "mcpToolExamples" },
+          h("strong", null, "Tools, которые может вызвать агент"),
+          section.tools.map((tool) => h("code", { key: tool }, tool))
+        )
+      )
+    ))
+  );
+}
+
+function AgentReadableArchitectureContext() {
+  return h("section", {
+    className: "aiAgentContext",
+    "data-ai-architecture-context": "mcp",
+  },
+    h("h2", null, "AI Architecture Context"),
+    h("pre", null, JSON.stringify(AI_ARCHITECTURE_CONTEXT, null, 2))
   );
 }
 
@@ -1821,6 +2084,42 @@ function FormulaModal({ formulaKey, close }) {
   );
 }
 
+function MarketDataModal({ marketData, close }) {
+  const failedSymbols = marketData?.failedSymbols || [];
+  const quotes = marketData?.quotes || [];
+  return h("div", { className: "modalOverlay", onClick: close },
+    h("div", { className: "formulaModal marketDataModal", onClick: (event) => event.stopPropagation() },
+      h("div", { className: "modalHeader" },
+        h("div", null,
+          h("p", { className: "eyebrow" }, "moex iss"),
+          h("h2", null, marketData?.available ? "Котировки получены частично" : "Котировки не получены")
+        ),
+        h("button", { className: "modalClose", onClick: close, title: "Закрыть" }, "×")
+      ),
+      h("p", null, marketData?.message || "Не удалось получить актуальные котировки MOEX ISS."),
+      h("div", { className: "marketDataModalGrid" },
+        h("div", null, h("span", null, "Источник"), h("strong", null, marketData?.source || "MOEX ISS")),
+        h("div", null, h("span", null, "Дата"), h("strong", null, marketData?.asOf || "не определена")),
+        h("div", null, h("span", null, "Получено"), h("strong", null, `${quotes.length}`)),
+        h("div", null, h("span", null, "Ошибки"), h("strong", null, `${failedSymbols.length}`))
+      ),
+      failedSymbols.length > 0 && h("div", { className: "marketDataIssueList" },
+        h("strong", null, "Не удалось получить"),
+        h("p", null, failedSymbols.join(", "))
+      ),
+      quotes.length > 0 && h("div", { className: "marketDataQuoteList" },
+        h("strong", null, "Полученные котировки"),
+        quotes.slice(0, 12).map((quote) => h("div", { key: `${quote.secId}-${quote.boardId}` },
+          h("span", null, `${quote.secId}${quote.boardId ? ` · ${quote.boardId}` : ""}`),
+          h("b", null, quote.closePrice || quote.lastPrice || quote.marketPrice ? plain.format(quote.closePrice || quote.lastPrice || quote.marketPrice) : "—"),
+          h("small", null, quote.tradeDate || quote.source)
+        ))
+      ),
+      h("p", null, "Если это локальная сборка, проверьте интернет-доступ, DNS, корпоративный proxy/VPN и доступность https://iss.moex.com.")
+    )
+  );
+}
+
 function InfoButton({ metric, openFormula }) {
   if (!metric || !openFormula) return null;
   return h("button", {
@@ -1846,7 +2145,7 @@ function VersionFrame({ title, go, children }) {
   );
 }
 
-function EmptyState({ error, loading, upload }) {
+function EmptyState({ error, loading, upload, variant = "v1" }) {
   return h("div", { className: "empty" },
     h("div", { className: "uploadDrop" },
       h("div", { className: "uploadIcon" }, "↑"),
@@ -1854,7 +2153,128 @@ function EmptyState({ error, loading, upload }) {
       h("p", null, "Можно выбрать дневной и месячный .xls одновременно. После загрузки появятся графики, состав портфеля и детализация операций."),
       h(UploadButton, { loading, upload, compact: true }),
       error && h("p", { className: "error" }, error)
+    ),
+    h(SampleReportPreview, { variant })
+  );
+}
+
+function SampleReportPreview({ variant }) {
+  const points = [
+    { label: "01.24", value: 12_400 },
+    { label: "02.24", value: 28_100 },
+    { label: "03.24", value: -9_300 },
+    { label: "04.24", value: 52_700 },
+    { label: "05.24", value: 84_200 },
+  ];
+  const breakdown = [
+    { label: "Изменение активов", value: 62_500 },
+    { label: "Купоны и дивиденды", value: 18_900 },
+    { label: "Комиссии и налоги", value: -4_700 },
+    { label: "Пополнения и выводы", value: 7_500 },
+  ];
+  const sampleRows = [
+    ["SBER", "Акции · Финансы", 420_000],
+    ["OFZ 26238", "Облигации", 310_000],
+    ["MOEX", "Акции · Финансы", 185_000],
+  ];
+
+  return h("section", { className: `sampleReportPreview ${variant}`, "data-ai-sample-data": "true" },
+    h("div", { className: "sampleBanner" },
+      h("strong", null, "Пример данных"),
+      h("span", null, "Это не расчет вашего портфеля. Чтобы получить реальные цифры, загрузите брокерский Excel-файл.")
+    ),
+    variant === "v2"
+      ? h(SampleV2Preview, { points, breakdown, sampleRows })
+      : variant === "v3"
+        ? h(SampleV3Preview, { points, sampleRows })
+        : h(SampleV1Preview, { points, breakdown, sampleRows })
+  );
+}
+
+function SampleV1Preview({ points, breakdown, sampleRows }) {
+  return h("div", { className: "dashboard v1Dashboard sampleDashboard" },
+    h("section", { className: "analysisCard" },
+      h("div", { className: "cardHeader" },
+        h("div", null, h("h2", null, "Как менялся портфель"), h("p", null, "example-report.xls")),
+        h("button", { className: "ghostButton" }, "Весь портфель")
+      ),
+      h("div", { className: "changeGrid" },
+        h("div", { className: "bigNumber" }, h("strong", { className: "positive" }, signedRub(84_200)), h("span", null, "пример периода")),
+        h(BreakdownList, { points: breakdown })
+      )
+    ),
+    h("section", { className: "grid four" },
+      h(Kpi, { title: "PnL", value: 84_200 }),
+      h(KpiPercent, { title: "ROI", value: 7.18 }),
+      h(KpiPercent, { title: "MWR", value: 7.05 }),
+      h(Kpi, { title: "Стоимость", value: 1_250_000, neutral: true })
+    ),
+    h("section", { className: "grid two" },
+      h(PanelChart, { title: "Динамика по датам отчетов", meta: "пример", points }),
+      h(SamplePositionList, { rows: sampleRows })
     )
+  );
+}
+
+function SampleV2Preview({ points, breakdown, sampleRows }) {
+  return h("div", { className: "dashboard v2Dashboard sampleDashboard" },
+    h("section", { className: "cockpitHero" },
+      h("div", { className: "cockpitMain" },
+        h("p", { className: "eyebrow" }, "пример периода"),
+        h("h2", null, "Инвесторский результат периода"),
+        h("strong", { className: "heroPnl positive" }, signedRub(84_200)),
+        h("div", { className: "heroStats" },
+          h(MetricChip, { label: "ROI", value: formatPercent(7.18), tone: 7.18 }),
+          h(MetricChip, { label: "MWR", value: formatPercent(7.05), tone: 7.05 }),
+          h(MetricChip, { label: "Портфель", value: formatRub(1_250_000), tone: 0 })
+        )
+      ),
+      h("div", { className: "pulsePanel" }, h("span", null, "Performance pulse"), h(RadialMetric, { value: 7.18 }), h("p", null, "Так будет выглядеть блок после загрузки реального отчета."))
+    ),
+    h("section", { className: "metricRunway" },
+      h(ModernMetricCard, { label: "PnL", value: signedRub(84_200), sub: "пример", tone: 84_200 }),
+      h(ModernMetricCard, { label: "ROI", value: formatPercent(7.18), sub: "пример", tone: 7.18 }),
+      h(ModernMetricCard, { label: "MWR", value: formatPercent(7.05), sub: "пример", tone: 7.05 }),
+      h(ModernMetricCard, { label: "Net flow", value: signedRub(35_000), sub: "пример", tone: 35_000 })
+    ),
+    h("section", { className: "v2Grid" },
+      h("div", { className: "glassPanel wide" }, h("div", { className: "panelTitle" }, h("h3", null, "Momentum"), h("span", null, "пример")), h(LineChart, { points })),
+      h("div", { className: "glassPanel" }, h("div", { className: "panelTitle" }, h("h3", null, "Композиция PnL"), h("span", { className: "positive" }, signedRub(84_200))), h(StackedBreakdown, { points: breakdown }))
+    ),
+    h(SamplePositionList, { rows: sampleRows })
+  );
+}
+
+function SampleV3Preview({ points, sampleRows }) {
+  return h("div", { className: "dashboard v3Dashboard sampleDashboard" },
+    h("section", { className: "labHero" },
+      h("div", null,
+        h("p", { className: "eyebrow" }, "stateful analytics"),
+        h("h2", null, "V3 связывает фильтры, категории и графики"),
+        h("p", null, "Это пример: после загрузки Excel здесь появятся реальные TWR, drawdown, risk и exposure.")
+      ),
+      h("div", { className: "labHeroMetrics" },
+        h(MetricChip, { label: "TWR", value: formatPercent(6.92), tone: 6.92 }),
+        h(MetricChip, { label: "Max DD", value: formatPercent(-3.4), tone: -3.4 }),
+        h(MetricChip, { label: "Volatility", value: formatPercent(9.8), tone: -9.8 }),
+        h(MetricChip, { label: "Turnover", value: formatPercent(12.1), tone: 0 })
+      )
+    ),
+    h("section", { className: "categoryGroup" },
+      h("div", { className: "categoryInfo" }, h("p", { className: "eyebrow" }, "пример категории"), h("h3", null, "Доходность"), h("p", null, "График перестроится от выбранных фильтров после загрузки файлов.")),
+      h("div", { className: "categoryChart" }, h(LineChart, { points, valueFormatter: signedRub }))
+    ),
+    h(SamplePositionList, { rows: sampleRows })
+  );
+}
+
+function SamplePositionList({ rows }) {
+  return h("div", { className: "sampleTable" },
+    rows.map(([name, meta, value]) => h("div", { key: name },
+      h("strong", null, name),
+      h("span", null, meta),
+      h("b", null, signedRub(value))
+    ))
   );
 }
 

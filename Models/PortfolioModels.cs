@@ -3,7 +3,8 @@ using System.Text.Json.Serialization;
 public sealed record DashboardResponse(
     IReadOnlyList<ReportAnalysis> Reports,
     PortfolioSummary Summary,
-    MarketDataStatus? MarketData = null);
+    MarketDataStatus? MarketData = null,
+    ProcessingStatus? Processing = null);
 
 public sealed record PortfolioSummary(
     decimal PortfolioValue,
@@ -44,7 +45,8 @@ public sealed record ReportAnalysis(
     IReadOnlyList<DetailRow> IncomeRows,
     IReadOnlyList<DetailRow> ExpectedIncomeRows,
     IReadOnlyList<DetailRow> CommissionRows,
-    IReadOnlyList<IReadOnlyList<string>> PreviewRows);
+    IReadOnlyList<IReadOnlyList<string>> PreviewRows,
+    ReportDiagnostics Diagnostics);
 
 public sealed record ChartPoint(string Label, decimal Value);
 
@@ -110,3 +112,33 @@ public sealed record SecurityQuote(
     decimal? ClosePrice,
     decimal? MarketPrice,
     string Source);
+
+public sealed record ProcessingStatus(
+    int FilesReceived,
+    int FilesProcessed,
+    int FilesFailed,
+    IReadOnlyList<FileProcessingStatus> Files,
+    IReadOnlyList<ProcessingIssue> Issues);
+
+public sealed record FileProcessingStatus(
+    string FileName,
+    long SizeBytes,
+    bool Success,
+    string Status,
+    string Message,
+    int RowsRead,
+    int RowsRecognized,
+    int RowsSkipped);
+
+public sealed record ReportDiagnostics(
+    int RowsRead,
+    int RowsRecognized,
+    int RowsSkipped,
+    IReadOnlyList<ProcessingIssue> Issues);
+
+public sealed record ProcessingIssue(
+    string Severity,
+    string Scope,
+    string FileName,
+    int? RowIndex,
+    string Message);

@@ -82,6 +82,7 @@ p {
   color: #111;
   font-weight: 950;
   cursor: help;
+  padding: 0;
 }
 
 .marketDataWarning.failed {
@@ -90,6 +91,101 @@ p {
 
 .marketDataWarning.partial {
   background: var(--amber);
+}
+
+.uploadStatusPanel,
+.processingIssuesPanel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.uploadStatusPanel.done {
+  border-color: rgba(25, 201, 107, 0.24);
+}
+
+.uploadStatusPanel.warning,
+.processingIssuesPanel {
+  border-color: rgba(245, 189, 79, 0.28);
+}
+
+.uploadStatusPanel.error {
+  border-color: rgba(255, 79, 97, 0.3);
+}
+
+.uploadStatusHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.uploadStatusHeader p {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.uploadStatusDot {
+  width: 12px;
+  height: 12px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--cyan);
+  box-shadow: 0 0 0 6px rgba(25, 198, 208, 0.12);
+}
+
+.uploadStatusPanel.done .uploadStatusDot {
+  background: var(--green);
+  box-shadow: 0 0 0 6px rgba(25, 201, 107, 0.12);
+}
+
+.uploadStatusPanel.warning .uploadStatusDot {
+  background: var(--amber);
+  box-shadow: 0 0 0 6px rgba(245, 189, 79, 0.12);
+}
+
+.uploadStatusPanel.error .uploadStatusDot {
+  background: var(--red);
+  box-shadow: 0 0 0 6px rgba(255, 79, 97, 0.12);
+}
+
+.uploadFileList,
+.uploadProcessingSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.uploadFileList span,
+.uploadProcessingSummary span,
+.uploadIssuesLink,
+.processingIssuesToggle {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.uploadIssuesLink,
+.processingIssuesToggle {
+  cursor: pointer;
+}
+
+.uploadIssuesLink:not(:disabled),
+.processingIssuesToggle {
+  color: var(--amber);
+  background: rgba(245, 189, 79, 0.12);
+}
+
+.uploadIssuesLink:disabled {
+  cursor: default;
+  opacity: 0.65;
 }
 
 .topbar {
@@ -291,6 +387,53 @@ p {
 .formulaModal p:not(.eyebrow) {
   margin-top: 14px;
   color: var(--muted);
+}
+
+.marketDataModal {
+  width: min(720px, 100%);
+}
+
+.marketDataModalGrid,
+.marketDataQuoteList {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.marketDataModalGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.marketDataModalGrid div,
+.marketDataIssueList,
+.marketDataQuoteList div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.marketDataModalGrid span,
+.marketDataQuoteList small,
+.marketDataIssueList p {
+  color: var(--muted);
+}
+
+.marketDataIssueList {
+  margin-top: 16px;
+  border-color: rgba(255, 79, 97, 0.24);
+}
+
+.marketDataQuoteList div {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+}
+
+.marketDataQuoteList span {
+  overflow-wrap: anywhere;
 }
 
 @keyframes fadeIn {
@@ -496,6 +639,11 @@ p {
 
 .portfolioTicker strong {
   font-size: clamp(22px, 3vw, 34px);
+}
+
+.portfolioTicker.sample {
+  background:
+    linear-gradient(135deg, rgba(245, 189, 79, 0.98), rgba(75, 116, 255, 0.76));
 }
 
 .designCards {
@@ -1120,6 +1268,128 @@ p {
   margin-top: 8px;
 }
 
+.mcpArchitecture {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.mcpIntro,
+.mcpBlock {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 24px;
+  background:
+    linear-gradient(135deg, rgba(75, 116, 255, 0.12), transparent 42%),
+    rgba(255, 255, 255, 0.045);
+}
+
+.mcpIntro {
+  display: grid;
+  gap: 8px;
+  padding: 22px;
+}
+
+.mcpIntro h2 {
+  font-size: clamp(26px, 3vw, 38px);
+  line-height: 1;
+}
+
+.mcpIntro p:not(.eyebrow),
+.mcpBlockText p,
+.mcpBlockText span {
+  color: var(--muted);
+}
+
+.mcpBlock {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(320px, 1.2fr);
+  gap: 18px;
+  padding: 18px;
+}
+
+.mcpBlockText {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.mcpBlockText > span {
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.mcpBlockText h3 {
+  font-size: clamp(24px, 2.6vw, 34px);
+  line-height: 1;
+}
+
+.mcpExampleText {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.mcpExampleText p {
+  color: var(--text);
+}
+
+.mcpRequestScheme,
+.mcpToolExamples {
+  display: grid;
+  gap: 12px;
+}
+
+.mcpSchemeLine {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 10px;
+}
+
+.mcpSchemeStep {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  min-height: 96px;
+  padding: 14px;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.mcpSchemeStep b {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(25, 198, 208, 0.18);
+  color: var(--cyan);
+}
+
+.mcpSchemeStep span {
+  font-weight: 900;
+}
+
+.mcpToolExamples {
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.mcpToolExamples code {
+  display: block;
+  overflow-x: auto;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #dce7f4;
+  font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .explainCard,
 .flowPanel {
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1607,6 +1877,7 @@ p {
 
 .empty {
   display: grid;
+  gap: 18px;
   min-height: 460px;
   place-items: center;
   padding: 28px;
@@ -1638,8 +1909,121 @@ p {
   color: var(--muted);
 }
 
+.sampleReportPreview {
+  width: min(760px, 100%);
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(245, 189, 79, 0.26);
+  border-radius: 22px;
+  background:
+    linear-gradient(135deg, rgba(245, 189, 79, 0.12), transparent 42%),
+    rgba(255, 255, 255, 0.045);
+}
+
+.sampleReportPreview.v1,
+.sampleReportPreview.v2,
+.sampleReportPreview.v3 {
+  width: 100%;
+}
+
+.sampleBanner {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(245, 189, 79, 0.12);
+}
+
+.sampleBanner strong {
+  color: var(--amber);
+}
+
+.sampleBanner span,
+.sampleMetricGrid span,
+.sampleTable span {
+  color: var(--muted);
+}
+
+.sampleMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sampleMetricGrid div,
+.sampleTable div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.sampleMetricGrid strong,
+.sampleTable b {
+  overflow-wrap: anywhere;
+}
+
+.sampleTable {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sampleDashboard {
+  width: 100%;
+  pointer-events: none;
+  opacity: 0.96;
+}
+
+.sampleDashboard .analysisCard,
+.sampleDashboard .cockpitHero,
+.sampleDashboard .labHero,
+.sampleDashboard .glassPanel,
+.sampleDashboard .kpi,
+.sampleDashboard .categoryGroup {
+  border-style: dashed;
+}
+
 .error {
   color: var(--red) !important;
+}
+
+.processingIssuesPanel {
+  margin-top: 22px;
+  scroll-margin-top: 18px;
+}
+
+.processingIssuesPanel.collapsed {
+  gap: 0;
+}
+
+.processingIssueGroup {
+  display: grid;
+  gap: 10px;
+}
+
+.processingIssue {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid rgba(245, 189, 79, 0.18);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.processingIssue.error {
+  border-color: rgba(255, 79, 97, 0.26);
+}
+
+.processingIssue span,
+.processingIssueGroup small {
+  color: var(--muted);
 }
 
 .dashboard {
@@ -3122,6 +3506,10 @@ circle.negative {
   .customSummaryGrid,
   .customChartGrid,
   .leaderColumns,
+  .mcpBlock,
+  .sampleMetricGrid,
+  .sampleTable,
+  .marketDataModalGrid,
   .v3Notes {
     grid-template-columns: 1fr;
   }
