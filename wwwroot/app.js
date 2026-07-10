@@ -125,6 +125,19 @@ const ASSET_CLASS_OPTIONS = [
   ["bonds", "Облигации"],
 ];
 
+const INDUSTRY_RULES = [
+  ["Финансы", /\b(sber|sberp|vtbr|moex|tcsg|tcs|reni|uwgn)\b|сбер|втб|московск.*бирж|тинькофф|т-банк|ренессанс|страх/i],
+  ["Нефтегаз", /\b(gazp|lkoh|rosn|tatn|tatnp|nvtk|sngs|sngsp|trnfp|banep|bane)\b|газпром|лукойл|роснефт|татнефт|новатэк|сургутнефтегаз|транснефт|башнефт|нефт|газ/i],
+  ["Металлы и добыча", /\b(gmkn|rual|alrs|plzl|chmf|nlmk|magn|selg|poly|polym)\b|норник|норильск|русал|алрос|полюс|северстал|нлмк|магнитогорск|металл|сталь|алюмин|золот|алмаз|добыч/i],
+  ["Химия и удобрения", /\b(phor|akrn|kuaz)\b|фосагро|акрон|куйбышевазот|удобрен|хими/i],
+  ["Технологии", /\b(yndx|ozon|vkco|posi|hhru|sftl|astr)\b|яндекс|озон|vk|вк|positive|позитив|headhunter|softline|софтлайн|астра|технолог|software|it\b/i],
+  ["Потребсектор", /\b(mgnt|five|fixp|lenta|dets|obie)\b|магнит|x5|пятерочк|fix price|лента|детский мир|ритейл|потреб/i],
+  ["Телеком", /\b(mtss|rtkm|rtkmp)\b|мтс|ростелеком|телеком|связ/i],
+  ["Электроэнергетика", /\b(hydr|irao|fees|mrkc|mrkp|mrkv|mrky|msng|tgka|tgkb)\b|русгидро|интер рао|фск|мрск|мосэнерго|электроэнерг|генерац/i],
+  ["Недвижимость", /\b(pikk|smlt|etln|lsrg)\b|пик|самолет|эталон|лср|недвиж|девелоп/i],
+  ["Транспорт", /\b(aflt|flot|gltr|fesh)\b|аэрофлот|совкомфлот|globaltrans|транспорт|порт/i],
+];
+
 const DOWNLOAD_LINKS = [
   ["Windows", "https://github.com/PonomarevRA/hp-ai-demo/raw/main/release/historic-portfolio-ai-windows.zip", "win-x64"],
   ["Mac Apple Silicon", "https://github.com/PonomarevRA/hp-ai-demo/raw/main/release/historic-portfolio-ai-mac-arm64.zip", "osx-arm64"],
@@ -1463,7 +1476,7 @@ function buildFilteredDashboardData(data, filters) {
   const bounds = getReportDateBounds(getIncludedReports(data));
   const effectiveFilters = normalizeReportFilters(filters, bounds);
   const filteredReports = getFilteredReports(data.reports, effectiveFilters)
-    .map((report) => filterReportDetails(report, effectiveFilters));
+    .map((report) => buildFilteredReport(report, effectiveFilters));
 
   if (!filteredReports.length) {
     return {
@@ -1478,6 +1491,15 @@ function buildFilteredDashboardData(data, filters) {
     reports: filteredReports,
     summary: combineReportsClient(filteredReports),
   };
+}
+
+function buildFilteredReport(report, filters) {
+  const filteredReport = filterReportDetails(report, filters);
+  if (!hasDimensionFilters(filters)) {
+    return filteredReport;
+  }
+
+  return applyFilteredReportAggregates(report, filteredReport);
 }
 
 function buildEmptySummary() {
@@ -1606,6 +1628,73 @@ function combineReportsClient(reports) {
     expectedIncomeRows: chain.flatMap((report) => report.expectedIncomeRows || []).slice(0, 40),
     commissionRows: chain.flatMap((report) => report.commissionRows || []).slice(0, 40),
   };
+}
+
+function applyFilteredReportAggregates(sourceReport, filteredReport) {
+  const sourceAssetBase = assetRowsBase(sourceReport.assets);
+  const filteredAssetBase = assetRowsBase(filteredReport.assets);
+  const ratio = sourceAssetBase === 0 ? 0 : filteredAssetBase / sourceAssetBase;
+  const portfolioValue = round2(filteredAssetBase);
+  const startValue = round2(Number(sourceReport.metrics?.startValue || 0) * ratio);
+  const endValue = portfolioValue || round2(Number(sourceReport.metrics?.endValue || 0) * ratio);
+  const pnl = round2(Number(sourceReport.metrics?.pnl || 0) * ratio);
+  const portfolioChange = round2(Number(sourceReport.portfolioChange || 0) * ratio);
+  const deposits = round2(Number(sourceReport.depositsAndWithdrawals || 0) * ratio);
+  const netCashFlow = round2(Number(sourceReport.metrics?.netCashFlow || 0) * ratio);
+  const weightedCashFlow = round2(Number(sourceReport.metrics?.weightedCashFlow || 0) * ratio);
+  const coupons = filteredMoneyRowsTotal(sourceReport.incomeRows, filteredReport.incomeRows, sourceReport.couponsAndDividends, ratio, 1);
+  const commissions = filteredMoneyRowsTotal(sourceReport.commissionRows, filteredReport.commissionRows, sourceReport.commissionsAndTaxes, ratio, -1);
+  const assetChange = round2(portfolioChange - coupons - commissions - deposits);
+  const roi = startValue === 0 ? 0 : pnl / startValue * 100;
+  const mwrBase = startValue + weightedCashFlow;
+  const mwr = mwrBase === 0 ? 0 : pnl / mwrBase * 100;
+
+  return {
+    ...filteredReport,
+    portfolioValue,
+    portfolioChange,
+    couponsAndDividends: coupons,
+    commissionsAndTaxes: commissions,
+    depositsAndWithdrawals: deposits,
+    assetChange,
+    metrics: {
+      ...filteredReport.metrics,
+      pnl,
+      roi: round2(roi),
+      mwr: round2(mwr),
+      startValue,
+      endValue,
+      netCashFlow,
+      weightedCashFlow,
+    },
+    breakdown: [
+      { label: "Изменение активов", value: assetChange },
+      { label: "Купоны и дивиденды", value: coupons },
+      { label: "Комиссии и налоги", value: commissions },
+      { label: "Пополнения и выводы", value: deposits },
+    ],
+  };
+}
+
+function hasDimensionFilters(filters) {
+  const selectedClasses = filters?.assetClasses || [];
+  const selectedIndustries = filters?.industries || [];
+  const allClassesSelected = selectedClasses.length === ASSET_CLASS_OPTIONS.length
+    && ASSET_CLASS_OPTIONS.every(([id]) => selectedClasses.includes(id));
+  return !allClassesSelected || selectedIndustries.length > 0;
+}
+
+function assetRowsBase(rows) {
+  return (rows || []).reduce((sum, row) => sum + Math.abs(Number(row.value || 0)), 0);
+}
+
+function filteredMoneyRowsTotal(sourceRows, filteredRows, sourceTotal, ratio, sign) {
+  if ((sourceRows || []).length === 0) {
+    return round2(Number(sourceTotal || 0) * ratio);
+  }
+
+  const total = (filteredRows || []).reduce((sum, row) => sum + Math.abs(Number(row.value || 0)), 0);
+  return round2(total * sign);
 }
 
 function sumBy(items, key) {
@@ -1811,6 +1900,7 @@ function DashboardV1({ data, sourceData, report, activeReport, setActiveReport, 
   return h("div", { className: "dashboard v1Dashboard" },
     h(ReportFiltersBar, { data: sourceData, filters: reportFilters, setFilters: setReportFilters }),
     h(ReportTabs, { reports: data.reports, activeReport, setActiveReport }),
+    h(AgentBrief, { data, report }),
     h("section", { className: "analysisCard" },
       h("div", { className: "cardHeader" },
         h("div", null,
@@ -1874,6 +1964,7 @@ function DashboardV2({ data, sourceData, report, activeReport, setActiveReport, 
   return h("div", { className: "dashboard v2Dashboard" },
     h(ReportFiltersBar, { data: sourceData, filters: reportFilters, setFilters: setReportFilters }),
     h(ReportTabs, { reports: data.reports, activeReport, setActiveReport }),
+    h(AgentBrief, { data, report }),
     h("section", { className: "cockpitHero" },
       h("div", { className: "cockpitMain" },
         h("p", { className: "eyebrow" }, report.period),
@@ -1904,9 +1995,8 @@ function DashboardV2({ data, sourceData, report, activeReport, setActiveReport, 
       netCashFlow: activeMetrics.netCashFlow,
     }),
     h(ContributionLeaders, { report: filteredReport }),
-    h("section", { className: "v2Grid" },
-      h(InvestorIndicators, { report, summary }),
-      h(AgentBrief, { data, report })
+    h("section", { className: "v2Grid singleGrid" },
+      h(InvestorIndicators, { report, summary })
     ),
     h("section", { className: "v2Grid" },
       h("div", { className: "glassPanel wide" },
@@ -1950,6 +2040,7 @@ function DashboardV3({ data, sourceData, report, activeReport, setActiveReport, 
   return h("div", { className: "dashboard v3Dashboard" },
     h(ReportFiltersBar, { data: sourceData, filters: reportFilters, setFilters: setReportFilters }),
     h(ReportTabs, { reports: data.reports, activeReport, setActiveReport }),
+    h(AgentBrief, { data, report }),
     h("section", { className: "labHero" },
       h("div", null,
         h("p", { className: "eyebrow" }, "stateful analytics"),
@@ -1975,7 +2066,7 @@ function DashboardV3({ data, sourceData, report, activeReport, setActiveReport, 
       activePerformanceMetric,
       setActivePerformanceMetric,
     }),
-    h("section", { className: "v3Notes" },
+    h("section", { className: "v3Notes singleGrid" },
       h("div", { className: "glassPanel" },
         h("div", { className: "panelTitle" },
           h("h3", null, "Ограничения расчета"),
@@ -1987,8 +2078,7 @@ function DashboardV3({ data, sourceData, report, activeReport, setActiveReport, 
             h("span", null, note.text)
           ))
         )
-      ),
-      h(AgentBrief, { data, report })
+      )
     )
   );
 }
@@ -2323,11 +2413,8 @@ function extractIndustry(row) {
   }
 
   const text = rowSearchText(row);
-  if (/банк|финанс|страх/i.test(text)) return "Финансы";
-  if (/нефт|газ|энерг|электр/i.test(text)) return "Энергетика";
-  if (/металл|алюмин|сталь|добыч/i.test(text)) return "Материалы";
-  if (/телеком|связ/i.test(text)) return "Телеком";
-  if (/ит|технолог|software|tech/i.test(text)) return "Технологии";
+  const rule = INDUSTRY_RULES.find(([, pattern]) => pattern.test(text));
+  if (rule) return rule[0];
   if (/пиф|etf|фонд/i.test(text)) return "Фонды";
   if (/облигац|офз|купон/i.test(text)) return "Облигации";
   if (/денеж|рубл|cash|usd|eur/i.test(text)) return "Деньги";
@@ -2569,6 +2656,7 @@ function InvestorIndicators({ report, summary }) {
 }
 
 function AgentBrief({ data, report }) {
+  const [expanded, setExpanded] = useState(false);
   const prompt = buildAgentPrompt(data, report);
   async function copyPrompt() {
     if (navigator.clipboard) {
@@ -2576,13 +2664,25 @@ function AgentBrief({ data, report }) {
     }
   }
 
-  return h("div", { className: "glassPanel agentPanel" },
-    h("div", { className: "panelTitle" },
-      h("h3", null, "Отдать ИИ-агенту"),
-      h("button", { className: "copyButton", onClick: copyPrompt }, "Скопировать")
+  return h("section", {
+    className: `glassPanel agentPanel agentHandoff ${expanded ? "expanded" : "collapsed"}`,
+    "data-ai-agent-handoff": "true",
+    "data-ai-expanded": String(expanded),
+  },
+    h("div", { className: "panelTitle agentHandoffHeader" },
+      h("div", null,
+        h("h3", null, "Отдать ИИ-агенту"),
+        h("span", null, expanded ? "Готовый текст для передачи агенту" : "Свернуто, текст можно скопировать сразу")
+      ),
+      h("div", { className: "agentHandoffActions" },
+        h("button", { className: "copyButton", onClick: copyPrompt }, "Скопировать текст для ИИ"),
+        h("button", { className: "copyButton", onClick: () => setExpanded(!expanded), "aria-expanded": String(expanded) },
+          expanded ? "Свернуть" : "Развернуть"
+        )
+      )
     ),
-    h("p", null, "Короткий контекст, который можно передать агенту для поиска рисков, объяснения результата или подготовки инвестиционного комментария."),
-    h("pre", null, prompt)
+    expanded && h("p", null, "Короткий контекст, который можно передать агенту для поиска рисков, объяснения результата или подготовки инвестиционного комментария."),
+    expanded && h("pre", null, prompt)
   );
 }
 
