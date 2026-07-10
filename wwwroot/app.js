@@ -101,6 +101,36 @@ const AI_EXCEL_TRANSFER_GUIDE = [
   "Если нужно загрузить дневной и месячный отчеты, передайте оба файла одновременно в один input: multiple=true.",
 ];
 
+const DEFAULT_REPORT_FILTERS = {
+  preset: "all",
+  dateFrom: "",
+  dateTo: "",
+  assetClasses: ["cash", "stocks", "funds", "bonds"],
+  industries: [],
+};
+
+const PERIOD_PRESETS = [
+  ["1m", "1М", 1],
+  ["3m", "3М", 3],
+  ["6m", "6М", 6],
+  ["ytd", "YTD", "ytd"],
+  ["1y", "1Г", 12],
+  ["all", "Всё время", "all"],
+];
+
+const ASSET_CLASS_OPTIONS = [
+  ["cash", "Денежные средства"],
+  ["stocks", "Акции"],
+  ["funds", "Фонды"],
+  ["bonds", "Облигации"],
+];
+
+const DOWNLOAD_LINKS = [
+  ["Windows", "https://github.com/PonomarevRA/hp-ai-demo/raw/main/release/historic-portfolio-ai-windows.zip", "win-x64"],
+  ["Mac Apple Silicon", "https://github.com/PonomarevRA/hp-ai-demo/raw/main/release/historic-portfolio-ai-mac-arm64.zip", "osx-arm64"],
+  ["Mac Intel", "https://github.com/PonomarevRA/hp-ai-demo/raw/main/release/historic-portfolio-ai-mac-x64.zip", "osx-x64"],
+];
+
 const FORMULAS = {
   pnl: {
     title: "PnL",
@@ -865,6 +895,7 @@ function App() {
   const [error, setError] = useState("");
   const [data, setData] = useState(null);
   const [activeReport, setActiveReport] = useState(-1);
+  const [reportFilters, setReportFilters] = useState(DEFAULT_REPORT_FILTERS);
   const [formulaKey, setFormulaKey] = useState(null);
   const hashScreen = location.hash.replace("#", "");
   const initialScreen = ["v1", "v2", "v3", "scale", "history", "agents", "ops", "architecture"].includes(hashScreen) ? hashScreen : "home";
@@ -888,6 +919,7 @@ function App() {
       if (!response.ok) throw new Error(payload.error || "Не удалось разобрать отчет");
       setData(payload);
       setActiveReport(-1);
+      setReportFilters(DEFAULT_REPORT_FILTERS);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -895,26 +927,27 @@ function App() {
     }
   }
 
-  const report = data ? getActiveReport(data, activeReport) : null;
+  const filteredData = data ? buildFilteredDashboardData(data, reportFilters) : null;
+  const report = filteredData ? getActiveReport(filteredData, activeReport) : null;
   const openFormula = (key) => setFormulaKey(key);
 
   return h("main", { className: `shell screen-${screen}` },
-    h(AiAgentContext, { data, report, screen, activeReport }),
-    h(Topbar, { data, loading, upload, screen, go }),
-    screen === "home" && h(Home, { data, error, loading, upload, go }),
+    h(AiAgentContext, { data: filteredData, report, screen, activeReport }),
+    h(Topbar, { data: filteredData, loading, upload, screen, go }),
+    screen === "home" && h(Home, { data: filteredData, error, loading, upload, go }),
     screen === "v1" && h(VersionFrame, { title: "V1 · банковская аналитика", go },
-      data && report
-        ? h(DashboardV1, { data, report, activeReport, setActiveReport, openFormula })
+      filteredData && report
+        ? h(DashboardV1, { data: filteredData, sourceData: data, report, activeReport, setActiveReport, openFormula, reportFilters, setReportFilters })
         : h(EmptyState, { error, loading, upload })
     ),
     screen === "v2" && h(VersionFrame, { title: "V2 · investor cockpit", go },
-      data && report
-        ? h(DashboardV2, { data, report, activeReport, setActiveReport, openFormula })
+      filteredData && report
+        ? h(DashboardV2, { data: filteredData, sourceData: data, report, activeReport, setActiveReport, openFormula, reportFilters, setReportFilters })
         : h(EmptyState, { error, loading, upload })
     ),
     screen === "v3" && h(VersionFrame, { title: "V3 · metric lab", go },
-      data && report
-        ? h(DashboardV3, { data, report, activeReport, setActiveReport, openFormula })
+      filteredData && report
+        ? h(DashboardV3, { data: filteredData, sourceData: data, report, activeReport, setActiveReport, openFormula, reportFilters, setReportFilters })
         : h(EmptyState, { error, loading, upload })
     ),
     INFO_PAGES[screen] && h(InfoPage, { page: INFO_PAGES[screen], pageKey: screen, go, openFormula }),
@@ -976,6 +1009,7 @@ function Home({ data, error, loading, upload, go }) {
         h(UploadButton, { loading, upload }),
         data && h("button", { className: "secondaryButton", onClick: () => go("v3") }, "Открыть V3")
       ),
+      h(DownloadLinks, null),
       error && h("p", { className: "error" }, error)
     ),
     h("div", { className: "homePreview" },
@@ -1024,6 +1058,21 @@ function Home({ data, error, loading, upload, go }) {
         }))
       )
     )
+  );
+}
+
+function DownloadLinks() {
+  return h("div", { className: "downloadLinks" },
+    h("span", null, "Скачать готовую сборку"),
+    DOWNLOAD_LINKS.map(([label, href, meta]) => h("a", {
+      key: href,
+      href,
+      download: "",
+      title: `Скачать ${meta}`,
+    },
+      h("strong", null, label),
+      h("small", null, meta)
+    ))
   );
 }
 
@@ -1410,6 +1459,187 @@ function buildVirtualReport(data) {
   };
 }
 
+function buildFilteredDashboardData(data, filters) {
+  const bounds = getReportDateBounds(getIncludedReports(data));
+  const effectiveFilters = normalizeReportFilters(filters, bounds);
+  const filteredReports = getFilteredReports(data.reports, effectiveFilters)
+    .map((report) => filterReportDetails(report, effectiveFilters));
+
+  if (!filteredReports.length) {
+    return {
+      ...data,
+      reports: [],
+      summary: buildEmptySummary(),
+    };
+  }
+
+  return {
+    ...data,
+    reports: filteredReports,
+    summary: combineReportsClient(filteredReports),
+  };
+}
+
+function buildEmptySummary() {
+  return {
+    portfolioValue: 0,
+    portfolioChange: 0,
+    couponsAndDividends: 0,
+    commissionsAndTaxes: 0,
+    depositsAndWithdrawals: 0,
+    assetChange: 0,
+    metrics: {
+      pnl: 0,
+      roi: 0,
+      mwr: 0,
+      startValue: 0,
+      endValue: 0,
+      netCashFlow: 0,
+      weightedCashFlow: 0,
+    },
+    advancedMetrics: {
+      twr: 0,
+      maxDrawdown: 0,
+      volatility: 0,
+      sharpe: 0,
+      sortino: 0,
+      feeToPnl: 0,
+      feeToPortfolio: 0,
+      incomeYield: 0,
+      incomeShareOfReturn: 0,
+      top1Concentration: 0,
+      top3Concentration: 0,
+      top5Concentration: 0,
+      rubExposure: 0,
+      usdExposure: 0,
+      otherCurrencyExposure: 0,
+      fxImpact: 0,
+      turnover: 0,
+      realizedPnl: 0,
+      unrealizedPnl: 0,
+      returnSeries: [],
+      drawdownSeries: [],
+      riskSeries: [],
+      exposureSeries: [],
+      notes: [{ metric: "Filters", text: "Нет отчетов в выбранном диапазоне." }],
+    },
+    timeline: [],
+    breakdown: [],
+    topAssets: [],
+    trades: [],
+    incomeRows: [],
+    expectedIncomeRows: [],
+    commissionRows: [],
+  };
+}
+
+function combineReportsClient(reports) {
+  const ordered = reports.filter((report) => report.includedInSummary).sort(compareReportsByDate);
+  const chain = ordered.length ? ordered : reports.slice().sort(compareReportsByDate);
+  const first = chain[0];
+  const latest = chain[chain.length - 1];
+  const portfolioChange = sumBy(chain, "portfolioChange");
+  const coupons = sumBy(chain, "couponsAndDividends");
+  const commissions = sumBy(chain, "commissionsAndTaxes");
+  const deposits = sumBy(chain, "depositsAndWithdrawals");
+  const pnl = chain.reduce((sum, report) => sum + Number(report.metrics?.pnl || 0), 0);
+  const startValue = Number(first?.metrics?.startValue || 0);
+  const endValue = Number(latest?.metrics?.endValue || latest?.portfolioValue || 0);
+  const netCashFlow = chain.reduce((sum, report) => sum + Number(report.metrics?.netCashFlow || 0), 0);
+  const weightedCashFlow = chain.reduce((sum, report) => sum + Number(report.metrics?.weightedCashFlow || 0), 0);
+  const roi = startValue === 0 ? 0 : pnl / startValue * 100;
+  const mwr = startValue + weightedCashFlow === 0 ? 0 : pnl / (startValue + weightedCashFlow) * 100;
+  const periodReturns = chain.map((report) => ({
+    label: formatReportDateRange(report),
+    value: Number(report.metrics?.startValue || 0) === 0 ? 0 : Number(report.metrics?.pnl || 0) / Number(report.metrics.startValue) * 100,
+  }));
+  const twr = (periodReturns.reduce((acc, point) => acc * (1 + point.value / 100), 1) - 1) * 100;
+  const topAssets = (latest?.assets || []).slice().sort((left, right) => Math.abs(Number(right.value || 0)) - Math.abs(Number(left.value || 0))).slice(0, 12);
+  const totalAssets = Math.max(1, topAssets.reduce((sum, row) => sum + Math.abs(Number(row.value || 0)), 0));
+
+  return {
+    portfolioValue: endValue,
+    portfolioChange,
+    couponsAndDividends: coupons,
+    commissionsAndTaxes: commissions,
+    depositsAndWithdrawals: deposits,
+    assetChange: portfolioChange - coupons - commissions - deposits,
+    metrics: {
+      pnl: round2(pnl),
+      roi: round2(roi),
+      mwr: round2(mwr),
+      startValue: round2(startValue),
+      endValue: round2(endValue),
+      netCashFlow: round2(netCashFlow),
+      weightedCashFlow: round2(weightedCashFlow),
+    },
+    advancedMetrics: {
+      ...buildEmptySummary().advancedMetrics,
+      twr: round2(twr),
+      maxDrawdown: Math.min(0, ...periodReturns.map((point) => Math.min(0, point.value))),
+      volatility: round2(standardDeviationJs(periodReturns.map((point) => point.value))),
+      feeToPnl: safePercent(Math.abs(commissions), Math.abs(pnl)),
+      feeToPortfolio: safePercent(Math.abs(commissions), endValue),
+      incomeYield: safePercent(coupons, startValue),
+      incomeShareOfReturn: safePercent(coupons, Math.abs(pnl)),
+      top1Concentration: safePercent(topAssets.slice(0, 1).reduce((sum, row) => sum + Math.abs(Number(row.value || 0)), 0), totalAssets),
+      top3Concentration: safePercent(topAssets.slice(0, 3).reduce((sum, row) => sum + Math.abs(Number(row.value || 0)), 0), totalAssets),
+      top5Concentration: safePercent(topAssets.slice(0, 5).reduce((sum, row) => sum + Math.abs(Number(row.value || 0)), 0), totalAssets),
+      returnSeries: periodReturns.map((point) => ({ ...point, value: round2(point.value) })),
+      drawdownSeries: buildDrawdownSeriesJs(periodReturns),
+      riskSeries: [
+        { label: "Volatility", value: round2(standardDeviationJs(periodReturns.map((point) => point.value))) },
+        { label: "Max DD", value: Math.min(0, ...periodReturns.map((point) => Math.min(0, point.value))) },
+      ],
+      notes: [{ metric: "Filters", text: "Итоги пересчитаны клиентским фильтром по загруженным отчетам." }],
+    },
+    timeline: chain.map((report) => ({ label: formatReportDateRange(report), value: Number(report.portfolioChange || 0) })),
+    breakdown: [
+      { label: "Изменение активов", value: portfolioChange - coupons - commissions - deposits },
+      { label: "Купоны и дивиденды", value: coupons },
+      { label: "Комиссии и налоги", value: commissions },
+      { label: "Пополнения и выводы", value: deposits },
+    ],
+    topAssets,
+    trades: chain.flatMap((report) => report.trades || []).slice(0, 40),
+    incomeRows: chain.flatMap((report) => report.incomeRows || []).slice(0, 40),
+    expectedIncomeRows: chain.flatMap((report) => report.expectedIncomeRows || []).slice(0, 40),
+    commissionRows: chain.flatMap((report) => report.commissionRows || []).slice(0, 40),
+  };
+}
+
+function sumBy(items, key) {
+  return items.reduce((sum, item) => sum + Number(item[key] || 0), 0);
+}
+
+function round2(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function safePercent(numerator, denominator) {
+  return Number(denominator || 0) === 0 ? 0 : round2(Number(numerator || 0) / Number(denominator) * 100);
+}
+
+function standardDeviationJs(values) {
+  if (values.length < 2) return 0;
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce((sum, value) => sum + (value - average) ** 2, 0) / (values.length - 1);
+  return Math.sqrt(variance);
+}
+
+function buildDrawdownSeriesJs(periodReturns) {
+  let cumulative = 1;
+  let peak = 1;
+  return periodReturns.map((point) => {
+    cumulative *= 1 + Number(point.value || 0) / 100;
+    peak = Math.max(peak, cumulative);
+    return {
+      label: point.label,
+      value: round2(peak === 0 ? 0 : (cumulative - peak) / peak * 100),
+    };
+  });
+}
+
 function FormulaModal({ formulaKey, close }) {
   const item = FORMULAS[formulaKey] || {
     title: ADVANCED_LABELS[formulaKey] || "Метрика",
@@ -1468,10 +1698,118 @@ function EmptyState({ error, loading, upload }) {
   );
 }
 
-function DashboardV1({ data, report, activeReport, setActiveReport, openFormula }) {
+function ReportFiltersBar({ data, filters, setFilters }) {
+  const reports = getIncludedReports(data).sort(compareReportsByDate);
+  const bounds = getReportDateBounds(reports);
+  const effectiveFilters = normalizeReportFilters(filters, bounds);
+  const industries = getIndustryOptions(data.reports);
+
+  function patch(next) {
+    setFilters({ ...effectiveFilters, ...next });
+  }
+
+  function choosePreset(preset, months) {
+    if (months === "all") {
+      patch({ preset, dateFrom: bounds.start, dateTo: bounds.end });
+      return;
+    }
+
+    if (months === "ytd") {
+      const year = (bounds.end || new Date().toISOString()).slice(0, 4);
+      patch({ preset, dateFrom: `${year}-01-01`, dateTo: bounds.end });
+      return;
+    }
+
+    patch({ preset, dateFrom: shiftIsoMonth(bounds.end, -months), dateTo: bounds.end });
+  }
+
+  function toggleAssetClass(id) {
+    const current = effectiveFilters.assetClasses;
+    const next = current.includes(id) ? current.filter((item) => item !== id) : [...current, id];
+    patch({ assetClasses: next.length ? next : current });
+  }
+
+  function toggleIndustry(id) {
+    const current = effectiveFilters.industries;
+    const next = current.includes(id) ? current.filter((item) => item !== id) : [...current, id];
+    patch({ industries: next });
+  }
+
+  function reset() {
+    setFilters({
+      ...DEFAULT_REPORT_FILTERS,
+      dateFrom: bounds.start,
+      dateTo: bounds.end,
+    });
+  }
+
+  return h("section", { className: "reportFilters", "data-ai-report-filters": "true" },
+    h("div", { className: "filterGroup periodPresetGroup" },
+      h("span", null, "Период"),
+      h("div", null, PERIOD_PRESETS.map(([id, label, months]) => h("button", {
+        key: id,
+        className: effectiveFilters.preset === id ? "active" : "",
+        onClick: () => choosePreset(id, months),
+      }, label)))
+    ),
+    h("label", { className: "filterGroup dateFilter" },
+      h("span", null, "С даты"),
+      h("input", {
+        type: "date",
+        value: effectiveFilters.dateFrom,
+        min: bounds.start,
+        max: effectiveFilters.dateTo || bounds.end,
+        onChange: (event) => patch({ preset: "custom", dateFrom: event.target.value }),
+      })
+    ),
+    h("label", { className: "filterGroup dateFilter" },
+      h("span", null, "По дату"),
+      h("input", {
+        type: "date",
+        value: effectiveFilters.dateTo,
+        min: effectiveFilters.dateFrom || bounds.start,
+        max: bounds.end,
+        onChange: (event) => patch({ preset: "custom", dateTo: event.target.value }),
+      })
+    ),
+    h("div", { className: "filterGroup assetClassFilter" },
+      h("span", null, "Классы активов"),
+      h("div", null, ASSET_CLASS_OPTIONS.map(([id, label]) => h("label", { key: id },
+        h("input", {
+          type: "checkbox",
+          checked: effectiveFilters.assetClasses.includes(id),
+          onChange: () => toggleAssetClass(id),
+        }),
+        label
+      )))
+    ),
+    h("div", { className: "filterGroup industryFilter" },
+      h("span", null, "Отрасли (мультивыбор)"),
+      h("details", null,
+        h("summary", null, effectiveFilters.industries.length ? `${effectiveFilters.industries.length} выбран(о)` : "Все отрасли"),
+        h("div", null,
+          industries.map((industry) => h("label", { key: industry },
+            h("input", {
+              type: "checkbox",
+              checked: effectiveFilters.industries.includes(industry),
+              onChange: () => toggleIndustry(industry),
+            }),
+            industry
+          ))
+        )
+      )
+    ),
+    h("button", { className: "filterReset", onClick: reset }, "Сбросить")
+  );
+}
+
+function DashboardV1({ data, sourceData, report, activeReport, setActiveReport, openFormula, reportFilters, setReportFilters }) {
   const summary = data.summary;
+  const effectiveFilters = normalizeReportFilters(reportFilters, getReportDateBounds(getIncludedReports(sourceData)));
+  const filteredReport = filterReportDetails(report, effectiveFilters);
   const includedReports = getIncludedReports(data);
   return h("div", { className: "dashboard v1Dashboard" },
+    h(ReportFiltersBar, { data: sourceData, filters: reportFilters, setFilters: setReportFilters }),
     h(ReportTabs, { reports: data.reports, activeReport, setActiveReport }),
     h("section", { className: "analysisCard" },
       h("div", { className: "cardHeader" },
@@ -1501,6 +1839,7 @@ function DashboardV1({ data, report, activeReport, setActiveReport, openFormula 
       twr: activeReport === -1 ? summary.advancedMetrics.twr : null,
       netCashFlow: report.metrics.netCashFlow,
     }),
+    h(ContributionLeaders, { report: filteredReport }),
     h("section", { className: "grid two" },
       h(PanelChart, { title: "Динамика по датам отчетов", meta: `${includedReports.length} период(а) в итогах`, points: buildReportMetricSeries(includedReports, "pnl") }),
       h(PanelChart, { title: "Из чего складывается результат", meta: signedRub(summary.portfolioChange), points: summary.breakdown })
@@ -1512,25 +1851,28 @@ function DashboardV1({ data, report, activeReport, setActiveReport, openFormula 
       h(Kpi, { title: "Пополнения и выводы", value: summary.depositsAndWithdrawals })
     ),
     h("section", { className: "grid two" },
-      h(DetailTable, { title: "Крупные позиции", rows: report.assets, empty: "Позиции не найдены" }),
-      h(DetailTable, { title: "Сделки", rows: report.trades, empty: "Сделки не найдены" })
+      h(DetailTable, { title: "Крупные позиции", rows: filteredReport.assets, empty: "Позиции не найдены" }),
+      h(DetailTable, { title: "Сделки", rows: filteredReport.trades, empty: "Сделки не найдены" })
     ),
     h("section", { className: "grid two" },
-      h(DetailTable, { title: "Купоны и дивиденды", rows: report.incomeRows, empty: "Доходы не найдены" }),
-      h(DetailTable, { title: "Ожидаемый доход", rows: report.expectedIncomeRows || [], empty: "Ожидаемый доход не найден" })
+      h(DetailTable, { title: "Купоны и дивиденды", rows: filteredReport.incomeRows, empty: "Доходы не найдены" }),
+      h(DetailTable, { title: "Ожидаемый доход", rows: filteredReport.expectedIncomeRows || [], empty: "Ожидаемый доход не найден" })
     ),
     h("section", { className: "grid two" },
-      h(DetailTable, { title: "Комиссии и налоги", rows: report.commissionRows, empty: "Комиссии не найдены" }),
-      h(DetailTable, { title: "Все денежные операции", rows: [...report.incomeRows, ...(report.expectedIncomeRows || []), ...report.commissionRows], empty: "Операции не найдены" })
+      h(DetailTable, { title: "Комиссии и налоги", rows: filteredReport.commissionRows, empty: "Комиссии не найдены" }),
+      h(DetailTable, { title: "Все денежные операции", rows: [...filteredReport.incomeRows, ...(filteredReport.expectedIncomeRows || []), ...filteredReport.commissionRows], empty: "Операции не найдены" })
     )
   );
 }
 
-function DashboardV2({ data, report, activeReport, setActiveReport, openFormula }) {
+function DashboardV2({ data, sourceData, report, activeReport, setActiveReport, openFormula, reportFilters, setReportFilters }) {
   const summary = data.summary;
   const activeMetrics = report.metrics;
+  const effectiveFilters = normalizeReportFilters(reportFilters, getReportDateBounds(getIncludedReports(sourceData)));
+  const filteredReport = filterReportDetails(report, effectiveFilters);
   const includedReports = getIncludedReports(data);
   return h("div", { className: "dashboard v2Dashboard" },
+    h(ReportFiltersBar, { data: sourceData, filters: reportFilters, setFilters: setReportFilters }),
     h(ReportTabs, { reports: data.reports, activeReport, setActiveReport }),
     h("section", { className: "cockpitHero" },
       h("div", { className: "cockpitMain" },
@@ -1561,6 +1903,7 @@ function DashboardV2({ data, report, activeReport, setActiveReport, openFormula 
       twr: activeReport === -1 ? summary.advancedMetrics.twr : null,
       netCashFlow: activeMetrics.netCashFlow,
     }),
+    h(ContributionLeaders, { report: filteredReport }),
     h("section", { className: "v2Grid" },
       h(InvestorIndicators, { report, summary }),
       h(AgentBrief, { data, report })
@@ -1582,13 +1925,13 @@ function DashboardV2({ data, report, activeReport, setActiveReport, openFormula 
       )
     ),
     h("section", { className: "v2Grid" },
-      h(DetailTable, { title: "Позиции", rows: report.assets, empty: "Позиции не найдены", modern: true }),
-      h(DetailTable, { title: "Операции и доходы", rows: [...report.trades, ...report.incomeRows, ...(report.expectedIncomeRows || []), ...report.commissionRows], empty: "Операции не найдены", modern: true })
+      h(DetailTable, { title: "Позиции", rows: filteredReport.assets, empty: "Позиции не найдены", modern: true }),
+      h(DetailTable, { title: "Операции и доходы", rows: [...filteredReport.trades, ...filteredReport.incomeRows, ...(filteredReport.expectedIncomeRows || []), ...filteredReport.commissionRows], empty: "Операции не найдены", modern: true })
     )
   );
 }
 
-function DashboardV3({ data, report, activeReport, setActiveReport, openFormula }) {
+function DashboardV3({ data, sourceData, report, activeReport, setActiveReport, openFormula, reportFilters, setReportFilters }) {
   const [selected, setSelected] = useState(["performance", "risk", "costs"]);
   const [activePerformanceMetric, setActivePerformanceMetric] = useState("twr");
   const advanced = data.summary.advancedMetrics;
@@ -1605,6 +1948,7 @@ function DashboardV3({ data, report, activeReport, setActiveReport, openFormula 
   }
 
   return h("div", { className: "dashboard v3Dashboard" },
+    h(ReportFiltersBar, { data: sourceData, filters: reportFilters, setFilters: setReportFilters }),
     h(ReportTabs, { reports: data.reports, activeReport, setActiveReport }),
     h("section", { className: "labHero" },
       h("div", null,
@@ -1621,6 +1965,7 @@ function DashboardV3({ data, report, activeReport, setActiveReport, openFormula 
     ),
     h(CategoryFilters, { selected, toggleCategory }),
     h(PeriodChain, { reports: data.reports }),
+    h(ContributionLeaders, { report }),
     h(CategoryGroups, {
       data,
       report,
@@ -1645,6 +1990,39 @@ function DashboardV3({ data, report, activeReport, setActiveReport, openFormula 
       ),
       h(AgentBrief, { data, report })
     )
+  );
+}
+
+function ContributionLeaders({ report }) {
+  const leaders = buildContributionLeaders(report);
+  return h("section", { className: "contributionLeaders" },
+    h("div", { className: "panelTitle" },
+      h("div", null,
+        h("h3", null, "Топ вкладов в результат"),
+        h("span", null, "Лучшие и худшие инструменты по доступным строкам отчета")
+      ),
+      h("span", null, `${leaders.best.length + leaders.worst.length}`)
+    ),
+    h("div", { className: "leaderColumns" },
+      h(LeaderColumn, { title: "Лучшие", rows: leaders.best, tone: "positive" }),
+      h(LeaderColumn, { title: "Худшие", rows: leaders.worst, tone: "negative" })
+    )
+  );
+}
+
+function LeaderColumn({ title, rows, tone }) {
+  return h("div", { className: `leaderColumn ${tone}` },
+    h("strong", null, title),
+    rows.length
+      ? rows.map((row, index) => h("div", { className: "leaderRow", key: `${title}-${row.title}-${index}` },
+          h("em", null, `${index + 1}.`),
+          h("span", null,
+            h("b", null, row.title),
+            h("small", null, row.reason)
+          ),
+          h("strong", { className: classForValue(row.value) }, signedRub(row.value))
+        ))
+      : h("p", null, "Нет данных")
   );
 }
 
@@ -1862,6 +2240,227 @@ function ChartPeriodStamp({ report, reports }) {
     h("span", null, "Даты на графике"),
     h("strong", null, chain)
   );
+}
+
+function compareReportsByDate(left, right) {
+  return String(left.periodEnd || left.periodStart || "").localeCompare(String(right.periodEnd || right.periodStart || ""))
+    || String(left.fileName || "").localeCompare(String(right.fileName || ""));
+}
+
+function normalizeReportFilters(filters, bounds) {
+  return {
+    ...DEFAULT_REPORT_FILTERS,
+    ...filters,
+    dateFrom: filters?.dateFrom || bounds.start || "",
+    dateTo: filters?.dateTo || bounds.end || "",
+    assetClasses: filters?.assetClasses?.length ? filters.assetClasses : DEFAULT_REPORT_FILTERS.assetClasses,
+    industries: filters?.industries || [],
+  };
+}
+
+function getFilteredReports(reports, filters) {
+  return reports
+    .filter((report) => {
+      const start = report.periodStart || report.periodEnd;
+      const end = report.periodEnd || report.periodStart;
+      return (!filters.dateFrom || end >= filters.dateFrom) && (!filters.dateTo || start <= filters.dateTo);
+    })
+    .sort(compareReportsByDate);
+}
+
+function filterReportDetails(report, filters) {
+  return {
+    ...report,
+    assets: (report.assets || []).filter((row) => rowMatchesReportFilters(row, filters)),
+    trades: (report.trades || []).filter((row) => rowMatchesReportFilters(row, filters)),
+    incomeRows: (report.incomeRows || []).filter((row) => rowMatchesReportFilters(row, filters)),
+    expectedIncomeRows: (report.expectedIncomeRows || []).filter((row) => rowMatchesReportFilters(row, filters)),
+    commissionRows: (report.commissionRows || []).filter((row) => rowMatchesReportFilters(row, filters)),
+  };
+}
+
+function rowMatchesReportFilters(row, filters) {
+  const assetClass = classifyDetailRow(row);
+  const classMatches = !filters.assetClasses?.length || filters.assetClasses.includes(assetClass);
+  const industry = extractIndustry(row);
+  const industryMatches = !filters.industries?.length || filters.industries.includes(industry);
+  const dateMatches = rowMatchesDateRange(row, filters);
+  return classMatches && industryMatches && dateMatches;
+}
+
+function rowMatchesDateRange(row, filters) {
+  const dates = extractRowIsoDates(row);
+  if (!dates.length) {
+    return true;
+  }
+
+  return dates.some((date) => (!filters.dateFrom || date >= filters.dateFrom) && (!filters.dateTo || date <= filters.dateTo));
+}
+
+function extractRowIsoDates(row) {
+  const text = rowSearchText(row);
+  return Array.from(text.matchAll(/\b(\d{2})\.(\d{2})\.(\d{2,4})\b/g))
+    .map((match) => {
+      const year = match[3].length === 2 ? `20${match[3]}` : match[3];
+      return `${year}-${match[2]}-${match[1]}`;
+    })
+    .filter(Boolean);
+}
+
+function classifyDetailRow(row) {
+  const text = rowSearchText(row);
+  if (/денеж|валют|рубл|rub|usd|eur|cash|остаток/i.test(text)) return "cash";
+  if (/пиф|бпиф|etf|фонд|fund/i.test(text)) return "funds";
+  if (/облигац|офз|bond|купон/i.test(text)) return "bonds";
+  return "stocks";
+}
+
+function extractIndustry(row) {
+  const entries = Object.entries(row.columns || {});
+  const explicit = entries.find(([key]) => /отрасл|сектор|industry|sector/i.test(key));
+  if (explicit?.[1]) {
+    return explicit[1];
+  }
+
+  const text = rowSearchText(row);
+  if (/банк|финанс|страх/i.test(text)) return "Финансы";
+  if (/нефт|газ|энерг|электр/i.test(text)) return "Энергетика";
+  if (/металл|алюмин|сталь|добыч/i.test(text)) return "Материалы";
+  if (/телеком|связ/i.test(text)) return "Телеком";
+  if (/ит|технолог|software|tech/i.test(text)) return "Технологии";
+  if (/пиф|etf|фонд/i.test(text)) return "Фонды";
+  if (/облигац|офз|купон/i.test(text)) return "Облигации";
+  if (/денеж|рубл|cash|usd|eur/i.test(text)) return "Деньги";
+  return "Все прочее";
+}
+
+function rowSearchText(row) {
+  return [
+    row?.title,
+    row?.subtitle,
+    ...Object.entries(row?.columns || {}).flatMap(([key, value]) => [key, value]),
+  ].filter(Boolean).join(" ");
+}
+
+function buildContributionLeaders(report) {
+  const rows = [
+    ...(report.assets || []),
+    ...(report.trades || []),
+    ...(report.incomeRows || []),
+    ...(report.expectedIncomeRows || []),
+    ...(report.commissionRows || []),
+  ]
+    .filter((row) => row?.title && Number.isFinite(Number(row.value)))
+    .map((row) => ({
+      title: row.title,
+      value: Number(row.value || 0),
+      reason: buildContributionReason(row),
+    }));
+
+  const best = rows
+    .filter((row) => row.value > 0)
+    .sort((left, right) => right.value - left.value)
+    .slice(0, 3);
+
+  const negativeWorst = rows
+    .filter((row) => row.value < 0)
+    .sort((left, right) => left.value - right.value)
+    .slice(0, 3);
+
+  const worst = negativeWorst.length
+    ? negativeWorst
+    : rows
+        .filter((row) => row.value >= 0)
+        .sort((left, right) => left.value - right.value)
+        .slice(0, 3)
+        .map((row) => ({ ...row, reason: `${row.reason}; минимальный положительный вклад` }));
+
+  return { best, worst };
+}
+
+function buildContributionReason(row) {
+  const assetClass = {
+    cash: "денежные средства",
+    stocks: "акция",
+    funds: "фонд",
+    bonds: "облигация / купон",
+  }[classifyDetailRow(row)] || "инструмент";
+  const industry = extractIndustry(row);
+  const source = row.subtitle ? ` · ${row.subtitle}` : "";
+  return `${assetClass}, ${industry}${source}`;
+}
+
+function getIndustryOptions(reports) {
+  const industries = new Set();
+  reports.forEach((report) => {
+    [
+      ...(report.assets || []),
+      ...(report.trades || []),
+      ...(report.incomeRows || []),
+      ...(report.expectedIncomeRows || []),
+      ...(report.commissionRows || []),
+    ].forEach((row) => industries.add(extractIndustry(row)));
+  });
+  return Array.from(industries).sort((left, right) => left.localeCompare(right));
+}
+
+function shiftIsoMonth(isoDate, deltaMonths) {
+  const date = parseIsoDate(isoDate) || new Date();
+  date.setUTCMonth(date.getUTCMonth() + deltaMonths);
+  return date.toISOString().slice(0, 10);
+}
+
+function getReportDateBounds(reports) {
+  const starts = reports.map((report) => report.periodStart).filter(Boolean).sort();
+  const ends = reports.map((report) => report.periodEnd || report.periodStart).filter(Boolean).sort();
+  return {
+    start: starts[0] || "",
+    end: ends[ends.length - 1] || starts[0] || "",
+  };
+}
+
+function extractAccountLabel(report) {
+  const source = String(report.fileName || report.sheetName || "Счет");
+  const withoutExtension = source.replace(/\.[^.]+$/, "");
+  const withoutDates = withoutExtension
+    .replace(/\d{2}[._-]\d{2}[._-]\d{2,4}/g, "")
+    .replace(/\d{4}[._-]\d{2}[._-]\d{2}/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return withoutDates || report.sheetName || "Загруженный счет";
+}
+
+function buildAccountOptions(reports) {
+  const groups = new Map();
+  reports.forEach((report) => {
+    const label = extractAccountLabel(report);
+    const id = label.toLowerCase();
+    const current = groups.get(id) || { id, label, count: 0, files: [] };
+    current.count += 1;
+    current.files.push(report.fileName);
+    groups.set(id, current);
+  });
+  return Array.from(groups.values()).sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function filterReportsByCustomPeriod(reports, dateFrom, dateTo, accountIds) {
+  return reports
+    .filter((report) => {
+      const accountId = extractAccountLabel(report).toLowerCase();
+      const start = report.periodStart || report.periodEnd;
+      const end = report.periodEnd || report.periodStart;
+      const accountMatches = accountIds.includes(accountId);
+      const dateMatches = (!dateFrom || end >= dateFrom) && (!dateTo || start <= dateTo);
+      return accountMatches && dateMatches;
+    })
+    .sort(compareReportsByDate);
+}
+
+function parseIsoDate(value) {
+  if (!value) return null;
+  const [year, month, day] = String(value).split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(Date.UTC(year, month - 1, day));
 }
 
 function buildReportMetricSeries(reports, metric) {
@@ -2102,6 +2701,10 @@ function BarChart({ points, signed }) {
 }
 
 function LineChart({ points, valueFormatter = signedRub }) {
+  if (!points.length) {
+    return h("div", { className: "chartEmpty" }, "Нет данных для выбранного фильтра");
+  }
+
   const width = 720;
   const height = 220;
   const values = points.map((p) => Number(p.value || 0));

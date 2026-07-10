@@ -8,4 +8,9 @@
         <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
     </PropertyGroup>
 
+    <ItemGroup>
+        <Content Remove="release/**" />
+        <None Remove="release/**" />
+    </ItemGroup>
+
 </Project>

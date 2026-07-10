@@ -385,6 +385,42 @@ p {
   align-items: center;
 }
 
+.downloadLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 2px;
+}
+
+.downloadLinks > span {
+  width: 100%;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.downloadLinks a {
+  display: grid;
+  gap: 2px;
+  min-width: 148px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.downloadLinks a:hover {
+  border-color: rgba(75, 116, 255, 0.58);
+  background: rgba(75, 116, 255, 0.14);
+}
+
+.downloadLinks small {
+  color: var(--muted);
+}
+
 .secondaryButton,
 .ghostButton,
 .backButton {
@@ -1602,6 +1638,109 @@ p {
   margin-bottom: 16px;
 }
 
+.reportFilters {
+  display: grid;
+  grid-template-columns: minmax(270px, 1.1fr) 120px 120px minmax(190px, 0.75fr) minmax(190px, 0.7fr) auto;
+  gap: 10px;
+  align-items: start;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.66);
+}
+
+.filterGroup {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.filterGroup > span,
+.filterGroup summary {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.periodPresetGroup > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.periodPresetGroup button,
+.filterReset {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.periodPresetGroup button.active {
+  background: var(--blue);
+}
+
+.dateFilter input {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text);
+  padding: 0 9px;
+}
+
+.assetClassFilter,
+.industryFilter {
+  padding: 9px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.assetClassFilter > div,
+.industryFilter details > div {
+  display: grid;
+  gap: 5px;
+  max-height: 92px;
+  overflow: auto;
+}
+
+.assetClassFilter label,
+.industryFilter label {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.industryFilter details {
+  position: relative;
+}
+
+.industryFilter summary {
+  min-height: 20px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.industryFilter summary::-webkit-details-marker {
+  display: none;
+}
+
+.filterReset {
+  align-self: end;
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--muted);
+}
+
 .analysisCard,
 .panel,
 .kpi,
@@ -1712,6 +1851,71 @@ p {
 
 .returnEqualityNote small {
   line-height: 1.45;
+}
+
+.contributionLeaders {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background: var(--glass);
+  backdrop-filter: blur(18px);
+}
+
+.leaderColumns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.leaderColumn {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.leaderColumn > strong {
+  color: var(--green);
+}
+
+.leaderColumn.negative > strong {
+  color: var(--red);
+}
+
+.leaderRow {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  min-height: 48px;
+}
+
+.leaderRow em {
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 900;
+}
+
+.leaderRow span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.leaderRow b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leaderRow small,
+.leaderColumn p {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .panel,
@@ -2021,6 +2225,171 @@ circle.negative {
   margin-top: 8px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.customPeriodLab {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 22px;
+  background:
+    linear-gradient(135deg, rgba(75, 116, 255, 0.12), transparent 46%),
+    rgba(255, 255, 255, 0.045);
+}
+
+.customPeriodHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.customPeriodHeader h3 {
+  margin-top: 4px;
+  font-size: clamp(24px, 3vw, 34px);
+}
+
+.customPeriodHeader span,
+.customFilters span,
+.customSummaryCard span,
+.customSummaryCard small,
+.customChartFooter,
+.customReturnTable span {
+  color: var(--muted);
+}
+
+.customPeriodHeader span {
+  display: block;
+  max-width: 860px;
+  margin-top: 6px;
+}
+
+.customFilters {
+  display: grid;
+  grid-template-columns: 170px 170px minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.customFilters label,
+.accountFilter {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.customFilters input {
+  min-height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text);
+  padding: 0 10px;
+}
+
+.accountFilter > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.accountFilter button {
+  display: grid;
+  gap: 2px;
+  min-height: 42px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.accountFilter button.active {
+  border-color: rgba(75, 116, 255, 0.72);
+  background: rgba(75, 116, 255, 0.18);
+}
+
+.accountFilter small {
+  color: var(--muted);
+}
+
+.customSummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.customSummaryCard {
+  display: grid;
+  gap: 6px;
+  min-height: 108px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.customSummaryCard strong {
+  font-size: clamp(20px, 2.5vw, 30px);
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+
+.customChartGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.customChartPanel {
+  min-height: 520px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.62);
+}
+
+.customChartPanel .panelTitle h3 {
+  font-size: 18px;
+}
+
+.customChartFooter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.customReturnTable {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+}
+
+.customReturnTable div {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 90px 110px;
+  gap: 12px;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.customEmpty {
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(245, 189, 79, 0.08);
+  color: var(--muted);
 }
 
 .categoryGroups {
@@ -2362,6 +2731,16 @@ circle.negative {
   margin-top: 14px;
 }
 
+.chartEmpty {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  margin-top: 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--muted);
+}
+
 .lineChart svg {
   width: 100%;
   height: 220px;
@@ -2395,6 +2774,117 @@ circle.negative {
 
 .lineChart circle.muted {
   color: var(--amber);
+}
+
+.multiLineChart {
+  margin-top: 16px;
+}
+
+.multiLineChart svg {
+  width: 100%;
+  height: 300px;
+  overflow: visible;
+}
+
+.multiGrid {
+  stroke: rgba(148, 163, 184, 0.14);
+  stroke-width: 1;
+}
+
+.multiBaseline {
+  stroke: rgba(148, 163, 184, 0.24);
+  stroke-width: 1.2;
+  stroke-dasharray: 5 5;
+}
+
+.multiArea {
+  fill: rgba(75, 116, 255, 0.12);
+}
+
+.multiSeries polyline {
+  fill: none;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.multiSeries circle {
+  fill: currentColor;
+  stroke: #111827;
+  stroke-width: 3;
+}
+
+.multiSeries.blue,
+.multiLegend .blue {
+  color: var(--blue);
+}
+
+.multiSeries.green,
+.multiLegend .green {
+  color: var(--green);
+}
+
+.multiSeries.amber,
+.multiLegend .amber {
+  color: var(--amber);
+}
+
+.multiSeries.muted,
+.multiLegend .muted {
+  color: #94a3b8;
+}
+
+.multiSeries polyline {
+  stroke: currentColor;
+}
+
+.multiSeries.dashed polyline {
+  stroke-dasharray: 10 10;
+}
+
+.multiAxis {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(80px, 1fr);
+  gap: 8px;
+  overflow-x: auto;
+  margin-top: 8px;
+}
+
+.multiAxis span {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.multiLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.multiLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.multiLegend i {
+  width: 18px;
+  height: 3px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.multiLegend b {
+  color: var(--text);
 }
 
 .chartDateAxis {
@@ -2542,6 +3032,7 @@ circle.negative {
 
   .homeHero,
   .homeInfoCards,
+  .reportFilters,
   .cockpitHero,
   .changeGrid,
   .grid.two,
@@ -2561,6 +3052,10 @@ circle.negative {
   .comparisonPanel,
   .opsGrid,
   .categoryGroup,
+  .customFilters,
+  .customSummaryGrid,
+  .customChartGrid,
+  .leaderColumns,
   .v3Notes {
     grid-template-columns: 1fr;
   }
@@ -2675,7 +3170,8 @@ circle.negative {
 
   .portfolioTicker,
   .cardHeader,
-  .panelTitle {
+  .panelTitle,
+  .customPeriodHeader {
     align-items: flex-start;
     flex-direction: column;
   }
