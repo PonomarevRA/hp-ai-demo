@@ -1,0 +1,11 @@
+bin/
+obj/
+/packages/
+riderModule.iml
+/_ReSharper.Caches/
+.idea/
+*.DotSettings.user
+
+release/windows/
+release/mac-arm64/
+release/mac-x64/

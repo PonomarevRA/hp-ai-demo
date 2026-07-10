@@ -1,0 +1,10 @@
+services:
+  historic-portfolio-ai:
+    image: historic-portfolio-ai
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      PORT: 8080
+    ports:
+      - "5087:8080"
