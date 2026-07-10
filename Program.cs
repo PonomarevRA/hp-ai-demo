@@ -2,6 +2,13 @@ using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.AddHttpClient<MoexIssClient>(client =>
+{
+    client.BaseAddress = new Uri("https://iss.moex.com/iss/");
+    client.Timeout = TimeSpan.FromSeconds(5);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("historic-portfolio-ai/1.0");
+});
+
 builder.Services.Configure<FormOptions>(options =>
 {
     options.MultipartBodyLengthLimit = 80 * 1024 * 1024;
@@ -13,7 +20,7 @@ var app = builder.Build();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-app.MapPost("/api/analyze", async (HttpRequest request) =>
+app.MapPost("/api/analyze", async (HttpRequest request, MoexIssClient moex, CancellationToken cancellationToken) =>
 {
     if (!request.HasFormContentType)
     {
@@ -40,7 +47,9 @@ app.MapPost("/api/analyze", async (HttpRequest request) =>
         reports.Add(PortfolioReportAnalyzer.Analyze(file.FileName, memory.ToArray()));
     }
 
-    return Results.Json(PortfolioReportAnalyzer.BuildDashboard(reports));
+    var dashboard = PortfolioReportAnalyzer.BuildDashboard(reports);
+    var marketData = await moex.TryEnrichAsync(dashboard, cancellationToken);
+    return Results.Json(dashboard with { MarketData = marketData });
 });
 
 app.MapFallbackToFile("index.html");

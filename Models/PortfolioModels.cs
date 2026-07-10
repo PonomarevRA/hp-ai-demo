@@ -2,7 +2,8 @@ using System.Text.Json.Serialization;
 
 public sealed record DashboardResponse(
     IReadOnlyList<ReportAnalysis> Reports,
-    PortfolioSummary Summary);
+    PortfolioSummary Summary,
+    MarketDataStatus? MarketData = null);
 
 public sealed record PortfolioSummary(
     decimal PortfolioValue,
@@ -89,3 +90,23 @@ public sealed record DetailRow(
     string Subtitle,
     decimal Value,
     IReadOnlyDictionary<string, string> Columns);
+
+public sealed record MarketDataStatus(
+    bool Requested,
+    bool Available,
+    bool IsPartial,
+    string Source,
+    string Message,
+    string? AsOf,
+    IReadOnlyList<SecurityQuote> Quotes,
+    IReadOnlyList<string> FailedSymbols);
+
+public sealed record SecurityQuote(
+    string SecId,
+    string BoardId,
+    string Name,
+    string? TradeDate,
+    decimal? LastPrice,
+    decimal? ClosePrice,
+    decimal? MarketPrice,
+    string Source);

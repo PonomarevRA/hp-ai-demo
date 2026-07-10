@@ -829,6 +829,17 @@ function buildAiAgentContext(data, report, screen, activeReport) {
     ],
     activeReportIndex: activeReport,
     hasData: Boolean(data && report),
+    marketData: data?.marketData ? {
+      requested: Boolean(data.marketData.requested),
+      available: Boolean(data.marketData.available),
+      isPartial: Boolean(data.marketData.isPartial),
+      source: data.marketData.source,
+      message: data.marketData.message,
+      asOf: data.marketData.asOf,
+      quotesCount: data.marketData.quotes?.length || 0,
+      failedSymbols: data.marketData.failedSymbols || [],
+      quotes: (data.marketData.quotes || []).slice(0, 20),
+    } : null,
     summary: summary ? {
       portfolioValueRub: Number(summary.portfolioValue || 0),
       portfolioChangeRub: Number(summary.portfolioChange || 0),
@@ -947,6 +958,7 @@ function App() {
   return h("main", { className: `shell screen-${screen}` },
     h(AiAgentContext, { data: filteredData, report, screen, activeReport }),
     h(Topbar, { data: filteredData, loading, upload, screen, go }),
+    h(MarketDataWarning, { marketData: filteredData?.marketData }),
     screen === "home" && h(Home, { data: filteredData, error, loading, upload, go }),
     screen === "v1" && h(VersionFrame, { title: "V1 · банковская аналитика", go },
       filteredData && report
@@ -990,6 +1002,20 @@ function Topbar({ data, loading, upload, screen, go }) {
     ),
     h(UploadButton, { loading, upload })
   );
+}
+
+function MarketDataWarning({ marketData }) {
+  if (!marketData?.requested || (marketData.available && !marketData.isPartial)) {
+    return null;
+  }
+
+  const title = marketData.message || "Актуальные котировки MOEX ISS не удалось получить";
+  return h("div", {
+    className: `marketDataWarning ${marketData.available ? "partial" : "failed"}`,
+    title,
+    "aria-label": title,
+    "data-ai-market-data-warning": "true",
+  }, "!");
 }
 
 function UploadButton({ loading, upload, compact = false }) {
@@ -2735,12 +2761,16 @@ function buildAgentPrompt(data, report) {
   const summary = data.summary;
   const topAssets = report.assets.slice(0, 5).map((item) => `${item.title}: ${signedRub(item.value)}`).join("; ");
   const expectedIncome = (report.expectedIncomeRows || []).slice(0, 3).map((item) => `${item.title}: ${signedRub(item.value)}`).join("; ");
+  const marketData = data.marketData
+    ? `MOEX ISS: ${data.marketData.message}${data.marketData.asOf ? ` Дата котировок: ${data.marketData.asOf}.` : ""}`
+    : "MOEX ISS: котировки не запрашивались.";
   return [
     "Проанализируй брокерский отчет инвестора и дай краткие выводы.",
     `Период: ${report.period}.`,
     `Стоимость портфеля: ${formatRub(summary.portfolioValue)}.`,
     `PnL: ${signedRub(report.metrics.pnl)}, ROI: ${formatPercent(report.metrics.roi)}, MWR: ${formatPercent(report.metrics.mwr)}.`,
     `Состав результата: активы ${signedRub(report.assetChange)}, купоны ${signedRub(report.couponsAndDividends)}, комиссии/налоги ${signedRub(report.commissionsAndTaxes)}, net flow ${signedRub(report.metrics.netCashFlow)}.`,
+    marketData,
     expectedIncome ? `Ожидаемый доход, не включенный в PnL: ${expectedIncome}.` : "Ожидаемый доход в отчете не найден.",
     `Крупные позиции: ${topAssets || "нет данных"}.`,
     "Ответь: 1) что повлияло на результат, 2) какие риски видны, 3) какие метрики стоит проверить дальше."
