@@ -132,210 +132,6 @@ function MetrikaScreenTracker({ screen, hasData, reportsCount }) {
   return null;
 }
 
-const REPORT_CHAT_SUGGESTIONS = {
-  v1: [
-    "Почему изменился портфель за период?",
-    "Какие крупные позиции в отчете?",
-    "Сколько комиссий и налогов?",
-  ],
-  v2: [
-    "Какой PnL и ROI за период?",
-    "Что означает net cash flow?",
-    "Какие операции сильнее всего повлияли на результат?",
-  ],
-  v3: [
-    "Какой TWR по цепочке отчетов?",
-    "Насколько велик max drawdown?",
-    "Какая концентрация Top-1?",
-  ],
-  v4: [
-    "Кратко объясни результат периода",
-    "Есть ли риски в аудите знаков?",
-    "Какая доля комиссий к PnL?",
-  ],
-};
-
-function buildReportChatContext(data, report, screen) {
-  const summary = data.summary;
-  const advanced = summary.advancedMetrics;
-  const payload = {
-    screen,
-    period: report.period,
-    periodStart: report.periodStart,
-    periodEnd: report.periodEnd,
-    fileName: report.fileName,
-    metrics: {
-      pnl: report.metrics.pnl,
-      roi: report.metrics.roi,
-      mwr: report.metrics.mwr,
-      twr: advanced.twr,
-      startValue: report.metrics.startValue,
-      endValue: report.metrics.endValue,
-      netCashFlow: report.metrics.netCashFlow,
-    },
-    portfolio: {
-      value: summary.portfolioValue,
-      change: summary.portfolioChange,
-      assetChange: summary.assetChange,
-      couponsAndDividends: summary.couponsAndDividends,
-      commissionsAndTaxes: summary.commissionsAndTaxes,
-      depositsAndWithdrawals: summary.depositsAndWithdrawals,
-    },
-    risk: {
-      maxDrawdown: advanced.maxDrawdown,
-      volatility: advanced.volatility,
-      sharpe: advanced.sharpe,
-      sortino: advanced.sortino,
-      feeToPnl: advanced.feeToPnl,
-    },
-    concentration: {
-      top1: advanced.top1Concentration,
-      top3: advanced.top3Concentration,
-      top5: advanced.top5Concentration,
-    },
-    topAssets: (report.assets || []).slice(0, 6).map((row) => ({
-      title: row.title,
-      value: Number(row.value || 0),
-    })),
-    reportsCount: data.reports.length,
-  };
-  return JSON.stringify(payload);
-}
-
-function ReportChatBlock({ screen, data, report }) {
-  const [expanded, setExpanded] = useState(false);
-  const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [status, setStatus] = useState("idle");
-  const [progress, setProgress] = useState("");
-  const [serverStatus, setServerStatus] = useState(null);
-  const [error, setError] = useState("");
-  const suggestions = REPORT_CHAT_SUGGESTIONS[screen] || REPORT_CHAT_SUGGESTIONS.v1;
-  const context = useMemo(() => buildReportChatContext(data, report, screen), [data, report, screen]);
-  const busy = status === "asking";
-  const modelReady = serverStatus?.ready === true;
-
-  useEffect(() => {
-    window.MetrikaSPA?.trackReportChat("block_view", { screen });
-    let active = true;
-
-    async function refreshStatus() {
-      try {
-        const response = await fetch("/api/ai-model/status");
-        if (!response.ok) return;
-        const payload = await response.json();
-        if (active) setServerStatus(payload);
-      } catch (_) {
-        if (active) setServerStatus({ ready: false, message: "Не удалось проверить ONNX-модель на сервере." });
-      }
-    }
-
-    refreshStatus();
-    const timer = window.setInterval(refreshStatus, 5000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [screen]);
-
-  async function submitQuestion(rawQuestion) {
-    const text = String(rawQuestion || question).trim();
-    if (!text || busy) return;
-
-    setExpanded(true);
-    setQuestion(text);
-    setAnswer("");
-    setError("");
-    setStatus("asking");
-    setProgress("Серверная ONNX-модель готовит ответ…");
-    window.MetrikaSPA?.trackReportChat("submit", { screen, question_length: text.length });
-
-    try {
-      if (!modelReady) {
-        throw new Error(serverStatus?.message || "Локальная ONNX-модель на сервере недоступна.");
-      }
-
-      const module = await import("/report-chat.js");
-      const response = await module.askReportChat({ question: text, context, screen });
-      setAnswer(response || "Модель не вернула текст ответа.");
-      setStatus("ready");
-      setProgress("");
-    } catch (err) {
-      setError(err?.message || "Не удалось получить ответ от модели.");
-      setStatus("error");
-      setProgress("");
-      window.MetrikaSPA?.trackReportChat("error", {
-        screen,
-        message: String(err?.message || err),
-      });
-    }
-  }
-
-  return h("section", {
-    className: `glassPanel agentPanel agentHandoff reportChatHandoff ${expanded ? "expanded" : "collapsed"}`,
-    "data-metrika-block": "report-chat",
-    "data-ai-report-chat": screen,
-    "data-ai-expanded": String(expanded),
-  },
-    h("div", { className: "panelTitle agentHandoffHeader" },
-      h("div", null,
-        h("h3", null, "Вопросы по отчету"),
-        h("span", null, expanded
-          ? (busy ? "Серверная ONNX-модель отвечает на вопрос" : "Простые вопросы по уже посчитанным данным")
-          : "Свернуто. Можно задать вопрос по текущему отчету")
-      ),
-      h("div", { className: "agentHandoffActions" },
-        h("button", {
-          className: "copyButton",
-          disabled: busy || !question.trim(),
-          onClick: () => submitQuestion(question),
-        }, status === "asking" ? "Отвечаю…" : "Спросить"),
-        h("button", {
-          className: "copyButton",
-          onClick: () => setExpanded(!expanded),
-          "aria-expanded": String(expanded),
-        }, expanded ? "Свернуть" : "Развернуть")
-      )
-    ),
-    expanded && h("p", { className: "reportChatNoticeText" },
-      "Памятка: это простая локальная модель Qwen2.5-0.5B-Instruct, которая работает на сервере через ONNX. Ответы могут быть неточными или неполными — сверяйте цифры с карточками, таблицами и формулами отчета. Модель не пересчитывает метрики, а только объясняет уже посчитанные данные."
-    ),
-    expanded && !modelReady && h("p", { className: "reportChatServerStatus" },
-      serverStatus?.message || "Локальная ONNX-модель на сервере недоступна."
-    ),
-    expanded && h("div", { className: "agentHandoffActions reportChatSuggestionRow" },
-      suggestions.map((item) => h("button", {
-        key: item,
-        className: "copyButton",
-        disabled: busy || !modelReady,
-        onClick: () => submitQuestion(item),
-      }, item))
-    ),
-    expanded && h("form", {
-      className: "reportChatForm",
-      onSubmit: (event) => {
-        event.preventDefault();
-        submitQuestion(question);
-      },
-    },
-      h("textarea", {
-        className: "reportChatInput",
-        rows: 4,
-        value: question,
-        placeholder: "Например: почему выросли комиссии и как это повлияло на PnL?",
-        onChange: (event) => setQuestion(event.target.value),
-        disabled: busy || !modelReady,
-      })
-    ),
-    expanded && progress && h("p", { className: "reportChatProgress" }, progress),
-    expanded && error && h("p", { className: "error reportChatError" }, error),
-    expanded && answer && h("div", { className: "reportChatAnswer" },
-      h("strong", null, "Ответ модели"),
-      h("p", null, answer)
-    )
-  );
-}
-
 const DEFAULT_REPORT_FILTERS = {
   preset: "all",
   dateFrom: "",
@@ -3008,7 +2804,6 @@ function DashboardV1({ data, sourceData, report, activeReport, setActiveReport, 
     h(ReportFiltersBar, { data: sourceData, filters: reportFilters, setFilters: setReportFilters }),
     h(ReportTabs, { reports: data.reports, activeReport, setActiveReport }),
     h(AgentBrief, { data, report }),
-    h(ReportChatBlock, { screen: "v1", data, report }),
     h("section", { className: "analysisCard", "data-metrika-block": "v1-portfolio-change" },
       h("div", { className: "cardHeader" },
         h("div", null,
@@ -3073,7 +2868,6 @@ function DashboardV2({ data, sourceData, report, activeReport, setActiveReport, 
     h(ReportFiltersBar, { data: sourceData, filters: reportFilters, setFilters: setReportFilters }),
     h(ReportTabs, { reports: data.reports, activeReport, setActiveReport }),
     h(AgentBrief, { data, report }),
-    h(ReportChatBlock, { screen: "v2", data, report }),
     h("section", { className: "cockpitHero", "data-metrika-block": "v2-hero" },
       h("div", { className: "cockpitMain" },
         h("p", { className: "eyebrow" }, report.period),
@@ -3150,7 +2944,6 @@ function DashboardV3({ data, sourceData, report, activeReport, setActiveReport, 
     h(ReportFiltersBar, { data: sourceData, filters: reportFilters, setFilters: setReportFilters }),
     h(ReportTabs, { reports: data.reports, activeReport, setActiveReport }),
     h(AgentBrief, { data, report }),
-    h(ReportChatBlock, { screen: "v3", data, report }),
     h("section", { className: "labHero", "data-metrika-block": "v3-hero" },
       h("div", null,
         h("p", { className: "eyebrow" }, "stateful analytics"),
@@ -3221,7 +3014,6 @@ function DashboardV4({ data, sourceData, report, activeReport, setActiveReport, 
     h(ReportFiltersBar, { data: sourceData, filters: reportFilters, setFilters: setReportFilters }),
     h(ReportTabs, { reports: data.reports, activeReport, setActiveReport }),
     h(AgentBrief, { data, report }),
-    h(ReportChatBlock, { screen: "v4", data, report }),
     h("section", { className: "v4Hero", "data-metrika-block": "v4-hero" },
       h("div", null,
         h("p", { className: "eyebrow" }, "V1 + V2 + V3 + broker report docs"),
