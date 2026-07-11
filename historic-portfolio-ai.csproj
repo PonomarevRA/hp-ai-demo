@@ -11,6 +11,15 @@
     <ItemGroup>
         <Content Remove="release/**" />
         <None Remove="release/**" />
+        <Content Update="ai-models/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+        <Content Remove="ai-models/**/.git/**" />
+        <None Remove="ai-models/**/.git/**" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.27.0" />
+      <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" Version="1.27.0" />
+      <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
     </ItemGroup>
 
 </Project>

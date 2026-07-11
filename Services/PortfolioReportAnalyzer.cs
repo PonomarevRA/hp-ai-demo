@@ -787,7 +787,10 @@ public static partial class PortfolioReportAnalyzer
             Title = group.Key,
             Subtitle = rows.Count == 1 ? first.Subtitle : $"{rows.Count} операций · {first.Subtitle}",
             Value = rows.Sum(x => x.Value),
-            Columns = columns
+            Columns = columns,
+            MergedSources = rows.Count > 1
+                ? rows.Select(row => new DetailRow(row.Title, row.Subtitle, row.Value, row.Columns)).ToList()
+                : null
         };
     }
 

@@ -91,7 +91,8 @@ public sealed record DetailRow(
     string Title,
     string Subtitle,
     decimal Value,
-    IReadOnlyDictionary<string, string> Columns);
+    IReadOnlyDictionary<string, string> Columns,
+    IReadOnlyList<DetailRow>? MergedSources = null);
 
 public sealed record MarketDataStatus(
     bool Requested,

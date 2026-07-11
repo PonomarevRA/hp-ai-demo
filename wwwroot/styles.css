@@ -3413,6 +3413,11 @@ circle.negative {
   font-weight: 900;
 }
 
+.copyButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .agentPanel pre {
   max-height: 220px;
   overflow: auto;
@@ -3710,6 +3715,46 @@ circle.negative {
   overflow-wrap: anywhere;
 }
 
+.mergedSourcesList {
+  display: grid;
+  gap: 8px;
+  margin: 0 14px 12px;
+  padding: 12px;
+  border: 1px solid rgba(25, 198, 208, 0.18);
+  border-radius: 12px;
+  background: rgba(25, 198, 208, 0.06);
+}
+
+.mergedSourcesTitle {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mergedSourceRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.mergedSourceRow strong,
+.mergedSourceRow small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mergedSourceRow b {
+  white-space: nowrap;
+}
+
 .emptyTable {
   margin-top: 16px;
 }
@@ -3936,4 +3981,55 @@ circle.negative {
   .detailRow dl {
     grid-template-columns: 1fr;
   }
+}
+
+.reportChatHandoff {
+  margin-top: 4px;
+  margin-bottom: 18px;
+}
+
+.reportChatNoticeText,
+.reportChatServerStatus,
+.reportChatProgress {
+  margin: 0;
+  color: var(--muted);
+}
+
+.reportChatSuggestionRow {
+  justify-content: flex-start;
+}
+
+.reportChatForm {
+  display: grid;
+  gap: 0;
+}
+
+.reportChatInput {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.18);
+  color: var(--text);
+  padding: 12px 14px;
+  font: inherit;
+}
+
+.reportChatAnswer {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(25, 198, 208, 0.24);
+  background: rgba(25, 198, 208, 0.08);
+}
+
+.reportChatAnswer p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.reportChatError {
+  margin: 0;
 }

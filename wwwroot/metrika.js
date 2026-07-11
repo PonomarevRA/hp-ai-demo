@@ -124,12 +124,20 @@
     };
   }
 
+  function trackReportChat(action, params) {
+    trackGoal("spa_report_chat", {
+      action,
+      ...(params || {}),
+    });
+  }
+
   window.MetrikaSPA = {
     COUNTER_ID,
     SCREEN_TITLES,
     trackScreenView,
     trackGoal,
     trackVersionOpen,
+    trackReportChat,
     startScrollTracking,
     getScrollDepth,
   };

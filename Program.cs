@@ -8,6 +8,7 @@ builder.Services.AddHttpClient<MoexIssClient>(client =>
     client.Timeout = TimeSpan.FromSeconds(5);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("historic-portfolio-ai/1.0");
 });
+builder.Services.AddSingleton<OnnxReportChatService>();
 
 builder.Services.Configure<FormOptions>(options =>
 {
@@ -89,6 +90,39 @@ app.MapPost("/api/analyze", async (HttpRequest request, MoexIssClient moex, Canc
     var dashboard = PortfolioReportAnalyzer.BuildDashboard(reports);
     var marketData = await moex.TryEnrichAsync(dashboard, cancellationToken);
     return Results.Json(dashboard with { MarketData = marketData, Processing = processing });
+});
+
+app.MapGet("/api/ai-model/status", (OnnxReportChatService chat) => Results.Json(chat.GetStatus()));
+
+app.MapPost("/api/report-chat", async (ReportChatRequest request, OnnxReportChatService chat, CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Question))
+    {
+        return Results.BadRequest(new { error = "Вопрос не может быть пустым." });
+    }
+
+    if (string.IsNullOrWhiteSpace(request.Context))
+    {
+        return Results.BadRequest(new { error = "Контекст отчета не передан." });
+    }
+
+    try
+    {
+        var response = await chat.AskAsync(request, cancellationToken);
+        return Results.Json(response);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (OperationCanceledException)
+    {
+        return Results.Json(new { error = "Запрос к ONNX-модели был отменен." }, statusCode: StatusCodes.Status499ClientClosedRequest);
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { error = $"Не удалось получить ответ от ONNX-модели: {ex.Message}" }, statusCode: StatusCodes.Status500InternalServerError);
+    }
 });
 
 app.MapFallbackToFile("index.html");
