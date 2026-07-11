@@ -376,21 +376,29 @@ public static partial class PortfolioReportAnalyzer
 
         var incomeRows = ExtractRows(rows, static text => text.Contains("купон", StringComparison.OrdinalIgnoreCase), 30)
             .Where(x => DateRegex().IsMatch(x.Subtitle))
+            .GroupBy(OperationAggregationKey, StringComparer.OrdinalIgnoreCase)
+            .Select(MergeDetailRows)
             .ToList();
-        var expectedIncomeRows = ExtractExpectedIncomeRows(rows);
+        var expectedIncomeRows = ExtractExpectedIncomeRows(rows)
+            .GroupBy(OperationAggregationKey, StringComparer.OrdinalIgnoreCase)
+            .Select(MergeDetailRows)
+            .ToList();
         var commissionRows = ExtractRows(rows, static text => text.Contains("комисси", StringComparison.OrdinalIgnoreCase)
                                                              || text.Contains("налог", StringComparison.OrdinalIgnoreCase), 30)
             .Where(x => DateRegex().IsMatch(x.Subtitle)
                         || x.Title.Contains("Комиссия", StringComparison.OrdinalIgnoreCase)
                         || x.Subtitle.Contains("Комиссия", StringComparison.OrdinalIgnoreCase))
             .Where(x => !x.Title.Contains("Итого", StringComparison.OrdinalIgnoreCase))
-            .GroupBy(x => $"{x.Title}:{Math.Abs(x.Value)}", StringComparer.OrdinalIgnoreCase)
-            .Select(x => x.First())
+            .Select(ApplyCommissionSign)
+            .GroupBy(CommissionAggregationKey, StringComparer.OrdinalIgnoreCase)
+            .Select(MergeDetailRows)
             .ToList();
         var trades = ExtractSectionRows(rows, "2.1. Сделки", "Займы", 40)
             .Concat(ExtractRows(rows, static text => text.Contains("Покупка/Продажа", StringComparison.OrdinalIgnoreCase), 20))
             .GroupBy(x => $"{x.Title}:{x.Subtitle}:{Math.Abs(x.Value)}", StringComparer.OrdinalIgnoreCase)
             .Select(x => x.First())
+            .GroupBy(OperationAggregationKey, StringComparer.OrdinalIgnoreCase)
+            .Select(MergeDetailRows)
             .ToList();
         var assets = ExtractAssetRows(rows);
         var diagnostics = BuildDiagnostics(fileName, rows, assets, trades, incomeRows, expectedIncomeRows, commissionRows);
@@ -719,9 +727,106 @@ public static partial class PortfolioReportAnalyzer
     {
         var candidates = ExtractRows(rows, static text => text.Contains("пополн", StringComparison.OrdinalIgnoreCase)
                                                         || text.Contains("вывод", StringComparison.OrdinalIgnoreCase), 100);
-        var total = candidates.Sum(x => x.Value);
-        var weighted = candidates.Sum(x => x.Value * CashFlowWeight(x, period));
+        var signedCandidates = candidates.Select(ApplyCashFlowSign).ToList();
+        var total = signedCandidates.Sum(x => x.Value);
+        var weighted = signedCandidates.Sum(x => x.Value * CashFlowWeight(x, period));
         return new CashFlowSummary(total, weighted);
+    }
+
+    private static DetailRow ApplyCommissionSign(DetailRow row)
+    {
+        var value = Math.Abs(row.Value);
+        var text = DetailSearchText(row);
+        var isRefund = text.Contains("возврат", StringComparison.OrdinalIgnoreCase)
+                       || text.Contains("refund", StringComparison.OrdinalIgnoreCase)
+                       || text.Contains("сторно", StringComparison.OrdinalIgnoreCase);
+        return row with { Value = isRefund ? value : -value };
+    }
+
+    private static string CommissionAggregationKey(DetailRow row)
+    {
+        return OperationAggregationKey(row);
+    }
+
+    private static string OperationAggregationKey(DetailRow row)
+    {
+        var title = row.Title;
+        if (title.StartsWith("Начислено:", StringComparison.OrdinalIgnoreCase))
+        {
+            title = title["Начислено:".Length..];
+        }
+
+        title = Regex.Replace(title, "\\([^)]*\\)", " ");
+        title = Regex.Replace(title, "\\s+", " ").Trim();
+        return title.Length == 0 ? row.Title : title;
+    }
+
+    private static DetailRow MergeDetailRows(IGrouping<string, DetailRow> group)
+    {
+        var rows = group.ToList();
+        var first = rows[0];
+        var columns = new Dictionary<string, string>(first.Columns, StringComparer.OrdinalIgnoreCase)
+        {
+            ["Количество строк"] = rows.Count.ToString(CultureInfo.InvariantCulture)
+        };
+        var dates = rows
+            .Select(ExtractDetailDate)
+            .OfType<DateTime>()
+            .Select(x => x.ToString("dd.MM.yy", CultureInfo.InvariantCulture))
+            .Distinct()
+            .Take(6)
+            .ToList();
+
+        if (dates.Count > 0)
+        {
+            columns["Даты операций"] = string.Join(", ", dates);
+        }
+
+        return first with
+        {
+            Title = group.Key,
+            Subtitle = rows.Count == 1 ? first.Subtitle : $"{rows.Count} операций · {first.Subtitle}",
+            Value = rows.Sum(x => x.Value),
+            Columns = columns
+        };
+    }
+
+    private static DetailRow ApplyCashFlowSign(DetailRow row)
+    {
+        var value = Math.Abs(row.Value);
+        var text = DetailSearchText(row);
+        var isOutflow = text.Contains("вывод", StringComparison.OrdinalIgnoreCase)
+                        || text.Contains("списан", StringComparison.OrdinalIgnoreCase)
+                        || text.Contains("расход", StringComparison.OrdinalIgnoreCase)
+                        || text.Contains("pay out", StringComparison.OrdinalIgnoreCase)
+                        || text.Contains("payout", StringComparison.OrdinalIgnoreCase);
+        var isInflow = text.Contains("пополн", StringComparison.OrdinalIgnoreCase)
+                       || text.Contains("зачисл", StringComparison.OrdinalIgnoreCase)
+                       || text.Contains("приход", StringComparison.OrdinalIgnoreCase)
+                       || text.Contains("pay in", StringComparison.OrdinalIgnoreCase)
+                       || text.Contains("payin", StringComparison.OrdinalIgnoreCase);
+
+        if (isOutflow && !isInflow)
+        {
+            return row with { Value = -value };
+        }
+
+        if (isInflow && !isOutflow)
+        {
+            return row with { Value = value };
+        }
+
+        return row;
+    }
+
+    private static string DetailSearchText(DetailRow row)
+    {
+        return string.Join(" ", new[]
+        {
+            row.Title,
+            row.Subtitle,
+            string.Join(" ", row.Columns.SelectMany(x => new[] { x.Key, x.Value }))
+        });
     }
 
     private static decimal CashFlowWeight(DetailRow row, PeriodInfo period)
@@ -823,8 +928,8 @@ public static partial class PortfolioReportAnalyzer
         }
 
         return result
-            .GroupBy(x => x.Title, StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.OrderByDescending(x => Math.Abs(x.Value)).First())
+            .GroupBy(OperationAggregationKey, StringComparer.OrdinalIgnoreCase)
+            .Select(MergeDetailRows)
             .OrderByDescending(x => Math.Abs(x.Value))
             .ToList();
     }

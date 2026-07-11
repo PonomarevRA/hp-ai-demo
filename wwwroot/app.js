@@ -1,4 +1,4 @@
-const { createElement: h, useMemo, useState } = React;
+const { createElement: h, useEffect, useMemo, useState } = React;
 
 const rub = new Intl.NumberFormat("ru-RU", {
   style: "currency",
@@ -86,6 +86,7 @@ const AI_SCREEN_GUIDES = {
   v1: "V1 показывает базовую аналитику: PnL, ROI, MWR, стоимость портфеля, состав результата и таблицы активов/операций.",
   v2: "V2 показывает investor cockpit: PnL, ROI, MWR, net flow, дополнительные индикаторы и готовый prompt для ИИ-агента.",
   v3: "V3 показывает расширенную аналитику: TWR, drawdown, volatility, Sharpe, Sortino, концентрацию, валютную экспозицию, realized/unrealized PnL.",
+  v4: "V4 объединяет V1/V2/V3: полный набор метрик, аудит знаков операций и профессиональное объяснение результата.",
   scale: "Информационная страница о масштабировании сервиса. Чисел портфеля здесь нет; используйте summary JSON, если отчеты уже загружены.",
   history: "Информационная страница о хранении истории. Для цифр портфеля используйте summary JSON и reports JSON.",
   agents: "Информационная страница об AI agents. Для ответа агенту используйте promptHint и activeReportContext.",
@@ -100,6 +101,36 @@ const AI_EXCEL_TRANSFER_GUIDE = [
   "Дождитесь, пока кнопка перестанет показывать 'Разбираю...', затем читайте section[data-ai-agent-context='portfolio'].",
   "Если нужно загрузить дневной и месячный отчеты, передайте оба файла одновременно в один input: multiple=true.",
 ];
+
+const V4_METRIC_GROUPS = [
+  ["Доходность", ["pnl", "roi", "mwr", "twr", "realizedPnl", "unrealizedPnl"]],
+  ["Риск", ["maxDrawdown", "volatility", "sharpe", "sortino"]],
+  ["Деньги и издержки", ["netCashFlow", "weightedCashFlow", "feeToPnl", "feeToPortfolio", "turnover"]],
+  ["Доход", ["incomeYield", "incomeShareOfReturn"]],
+  ["Портфель", ["rubExposure", "usdExposure", "otherCurrencyExposure", "fxImpact"]],
+];
+
+const CONCENTRATION_METRICS = ["top1Concentration", "top3Concentration", "top5Concentration"];
+
+function trackMetrikaScreen(screen, fromScreen, meta) {
+  if (!window.MetrikaSPA) return;
+  const payload = {
+    has_data: meta?.hasData ? 1 : 0,
+    reports: meta?.reportsCount || 0,
+    source: meta?.source || "navigation",
+    from: fromScreen || "direct",
+  };
+  window.MetrikaSPA.trackScreenView(screen, payload);
+  window.MetrikaSPA.trackVersionOpen(screen, fromScreen, payload);
+}
+
+function MetrikaScreenTracker({ screen, hasData, reportsCount }) {
+  useEffect(() => {
+    if (!window.MetrikaSPA) return undefined;
+    return window.MetrikaSPA.startScrollTracking(screen, { hasData, reportsCount });
+  }, [screen, hasData, reportsCount]);
+  return null;
+}
 
 const DEFAULT_REPORT_FILTERS = {
   preset: "all",
@@ -264,6 +295,153 @@ const FORMULAS = {
     title: "Как экономятся токены",
     formula: "Экономия = не отправлять сырой Excel + кэшировать агрегаты + давать агенту только нужный JSON",
     text: "Самая дорогая ошибка - каждый раз отдавать модели полный отчет и просить ее заново считать числа.",
+  },
+};
+
+const TECHNICAL_NOTES = {
+  pnl: {
+    data: "Нужны стоимость портфеля на начало/конец периода и net cash flow. Для базового расчета достаточно одного отчета с корректным итогом портфеля.",
+    compute: "Можно считать на ходу при загрузке файла; операция линейная по строкам отчета.",
+    background: "Для массовой истории лучше вынести в worker, чтобы сохранить снапшоты по периодам и не пересчитывать Excel при каждом открытии.",
+    precompute: "Предрассчитывать стоит дневные/месячные PnL-снапшоты, версию формулы и выбранную непересекающуюся цепочку отчетов.",
+  },
+  roi: {
+    data: "Нужны PnL и стартовая стоимость. Один период достаточен, но при нулевой стартовой стоимости показатель требует отдельной пометки.",
+    compute: "Можно считать синхронно вместе с PnL.",
+    background: "Background нужен не для формулы, а для нормализации старых форматов отчета и проверки пересечений периодов.",
+    precompute: "Хранить ROI по каждому отчету и по виртуальному периоду.",
+  },
+  mwr: {
+    data: "Нужны PnL, стартовая стоимость и все пополнения/выводы с датами. Чем точнее даты cash flow, тем надежнее Modified Dietz.",
+    compute: "Для одного файла можно считать на ходу; для длинной истории лучше считать в background из нормализованного ledger.",
+    background: "Да, стоит выносить, если загружается несколько лет или несколько счетов: требуется взвешивание потоков и контроль пересечений.",
+    precompute: "Хранить weighted cash flow и MWR по каждому периоду, чтобы V4 только читал готовую метрику.",
+  },
+  twr: {
+    data: "Нужно минимум 2-3 непересекающихся периода, иначе TWR почти не отличается от ROI одного периода и плохо объясняет динамику.",
+    compute: "Для уже готовых периодных доходностей можно считать на лету; подготовку цепочки периодов лучше делать заранее.",
+    background: "Для истории с 2022 года стоит background-процесс: сортировка периодов, исключение пересечений, построение return series.",
+    precompute: "Предрассчитывать return series, cumulative return и drawdown series.",
+  },
+  maxDrawdown: {
+    data: "Нужна серия доходностей или стоимостей по датам. Надежнее от 6-12 точек, лучше дневные/недельные снапшоты.",
+    compute: "На лету можно по готовой серии; из Excel-истории лучше готовить заранее.",
+    background: "Да, если строим по инструментам, счетам или daily snapshots.",
+    precompute: "Хранить peak, drawdown и max drawdown по портфелю и по крупным позициям.",
+  },
+  volatility: {
+    data: "Нужна серия доходностей. Для профессионального отчета желательно 30+ наблюдений; 3-5 отчетов дают слабую оценку.",
+    compute: "На лету можно только по готовой return series.",
+    background: "Стоит выносить при расчете дневной волатильности и при обогащении котировками MOEX.",
+    precompute: "Хранить периодные доходности и параметры окна расчета.",
+  },
+  sharpe: {
+    data: "Нужны доходности, volatility и ставка без риска. Сейчас risk-free rate принят 0%, это нужно явно показывать.",
+    compute: "Можно считать на лету после volatility.",
+    background: "Background нужен, если ставка без риска берется из внешнего источника или считается по валютам.",
+    precompute: "Хранить выбранную ставку, окно расчета и годовую/периодную нормализацию.",
+  },
+  sortino: {
+    data: "Нужна серия доходностей с отрицательными периодами. Если отрицательных точек нет, метрика может быть 0 или неинформативной.",
+    compute: "Можно считать на лету по готовой серии.",
+    background: "Для больших периодов лучше считать вместе с risk-блоком в worker.",
+    precompute: "Хранить downside deviation и число отрицательных наблюдений.",
+  },
+  turnover: {
+    data: "Нужны сделки и стоимость портфеля. Для точности нужны суммы сделок по всем площадкам и валютам.",
+    compute: "Можно считать на ходу для одного отчета; при большом числе сделок лучше агрегировать заранее.",
+    background: "Стоит выносить при обработке длинных брокерских отчетов и при нормализации сделок до ledger.",
+    precompute: "Хранить оборот по периоду, инструменту, классу актива и счету.",
+  },
+  netCashFlow: {
+    data: "Нужны все пополнения и выводы за период с корректными знаками. Вывод должен уменьшать базу, пополнение увеличивать.",
+    compute: "Можно считать на ходу после нормализации строк отчета.",
+    background: "Нужен для длинной истории, старого формата до 2023 года и сверки ДС/ЦБ потоков.",
+    precompute: "Хранить cash-flow ledger с типом операции, датой, валютой, знаком и ссылкой на исходную строку.",
+  },
+  weightedCashFlow: {
+    data: "Нужны даты денежных потоков и границы периода. Без даты операции используется приближение, которое нужно подсвечивать.",
+    compute: "Можно считать на ходу для одного периода, но только после проверки дат.",
+    background: "Лучше выносить, если пользователь загружает цепочку отчетов или несколько счетов.",
+    precompute: "Хранить вес каждого cash flow и итоговую сумму для MWR.",
+  },
+  feeToPnl: {
+    data: "Нужны агрегированные комиссии/налоги и PnL. Комиссии должны быть отрицательными, возвраты положительными.",
+    compute: "Можно считать на ходу после агрегации комиссий.",
+    background: "Для проф-отчета лучше заранее объединять однотипные комиссии и хранить источники строк.",
+    precompute: "Хранить fee total, tax total, refunds и fee drag по периоду.",
+  },
+  feeToPortfolio: {
+    data: "Нужны комиссии/налоги и стоимость портфеля на конец периода.",
+    compute: "Можно считать синхронно.",
+    background: "Background нужен при детализации комиссий по типам, рынкам и счетам.",
+    precompute: "Хранить комиссионную нагрузку по счету, периоду и типу комиссии.",
+  },
+  incomeYield: {
+    data: "Нужны купоны/дивиденды и стартовая стоимость портфеля.",
+    compute: "Можно считать на ходу после выделения income rows.",
+    background: "Нужен, если доходы нужно сверять с невыплаченным доходом, налогами и датами фиксации.",
+    precompute: "Хранить начислено, налог, комиссия, ожидаемое зачисление и фактическую выплату.",
+  },
+  incomeShareOfReturn: {
+    data: "Нужны доходы и абсолютный PnL. При PnL около нуля метрика может быть нестабильной.",
+    compute: "Можно считать на ходу.",
+    background: "Не обязателен, кроме сценариев с большим числом выплат и несколькими валютами.",
+    precompute: "Хранить вклад income в PnL по инструментам и периодам.",
+  },
+  top1Concentration: {
+    data: "Нужны позиции и рыночная стоимость каждой позиции.",
+    compute: "Можно считать на ходу по готовому списку активов.",
+    background: "Нужен, если стоимость позиций обогащается котировками и FX.",
+    precompute: "Хранить веса позиций и дату оценки.",
+  },
+  top3Concentration: {
+    data: "Нужны веса всех позиций; минимум полный список активов на дату отчета.",
+    compute: "Можно считать на ходу.",
+    background: "Лучше background при ежедневных снапшотах и больших портфелях.",
+    precompute: "Хранить top-N веса по каждому снапшоту.",
+  },
+  top5Concentration: {
+    data: "Нужны веса всех позиций; важно исключать дубли и технические строки.",
+    compute: "Можно считать на ходу.",
+    background: "Нужен при пересчете исторических срезов и нескольких счетов.",
+    precompute: "Хранить top-5 состав и суммарный вес.",
+  },
+  rubExposure: {
+    data: "Нужна валюта позиции или надежная классификация инструмента.",
+    compute: "Можно считать на ходу эвристически, но точнее после справочника инструментов.",
+    background: "Лучше background enrichment через справочник и FX.",
+    precompute: "Хранить валютную экспозицию по позиции и периоду.",
+  },
+  usdExposure: {
+    data: "Нужны валютные признаки позиции, рынок и валюта расчетов.",
+    compute: "Можно считать на ходу эвристически.",
+    background: "Нужен для точного разделения USMarkets/USD и рублевых инструментов с валютным риском.",
+    precompute: "Хранить валюту инструмента, валюту цены и валюту риска.",
+  },
+  otherCurrencyExposure: {
+    data: "Нужны все валютные экспозиции после классификации RUB/USD.",
+    compute: "Можно считать на ходу как остаток, но лучше не скрывать неизвестные валюты.",
+    background: "Нужен при мультивалютных портфелях.",
+    precompute: "Хранить exposure по каждой валюте отдельно.",
+  },
+  realizedPnl: {
+    data: "Нужны сделки, количество, цена входа/выхода, комиссии, налоги и корпоративные действия. Без цены входа это приближенная оценка.",
+    compute: "На лету можно только approximation; корректный realized PnL лучше считать из нормализованного ledger.",
+    background: "Да, обязательно для профессионального качества: matching лотов, FIFO/средняя цена, комиссии, валюты, сплиты.",
+    precompute: "Хранить налоговые лоты, среднюю цену, realized lots и связь с исходными строками.",
+  },
+  unrealizedPnl: {
+    data: "Нужны текущие/исторические котировки и корректная цена входа. Для MOEX можно брать цену на дату покупки и дату отчета.",
+    compute: "На лету можно после загрузки котировок, но сетевые запросы лучше не блокировать UI.",
+    background: "Лучше background enrichment: котировки, FX, сплиты, проверка stale price.",
+    precompute: "Хранить market value, cost basis и дату котировки по каждой позиции.",
+  },
+  fxImpact: {
+    data: "Нужны валютные операции, валюта инструмента, курсы на даты операций и дату отчета.",
+    compute: "Эвристику можно считать на ходу, точный FX attribution лучше заранее.",
+    background: "Да, нужен worker с курсами и нормализованными валютными потоками.",
+    precompute: "Хранить FX PnL по инструменту, валюте и периоду.",
   },
 };
 
@@ -588,14 +766,16 @@ const MCP_ARCHITECTURE_SECTIONS = [
     id: "mcp-tools",
     title: "Что такое tools внутри MCP",
     subtitle: "Tool — это не магия, а обычная функция с названием, описанием, схемой входа и проверяемым ответом.",
-    request: ["Agent prompt", "Tool schema", "Tool call", "Validated result", "Final answer"],
-    exampleText: "Найди комиссии за период и объясни, почему fee drag вырос.",
+    request: ["Пользователь", "Agent prompt", "broker-report MCP", "Расчетный backend", "Ответ с цифрами"],
+    exampleText: "Загрузи брокерский отчет, покажи PnL за год и объясни, почему комиссии выросли.",
     tools: [
-      "portfolio.getCommissions({ dateFrom: '2026-01-01', dateTo: '2026-06-30' })",
-      "portfolio.getFeeDrag({ period: 'YTD' })",
-      "portfolio.getSourceRows({ section: 'commissions' })",
+      "brokerReport.upload({ fileRef: 'report.xls', accountId: 'main' })",
+      "brokerReport.getProcessingStatus({ reportId: 'rpt_2026_07' })",
+      "brokerReport.getMetrics({ reportId: 'rpt_2026_07', period: 'YTD', version: 'v4' })",
+      "brokerReport.getOperations({ reportId: 'rpt_2026_07', section: 'commissions', aggregate: true })",
+      "brokerReport.explainMetric({ reportId: 'rpt_2026_07', metric: 'feeToPnl' })",
     ],
-    explanation: "Хороший tool ограничивает свободу агента: он не придумывает поля, не парсит Excel заново и получает только те данные, которые сервис разрешил выдать.",
+    explanation: "Хороший tool ограничивает свободу агента: пользователь говорит обычным языком, а агент вызывает проверяемые функции отчета, не парсит Excel сам и не придумывает поля.",
   },
 ];
 
@@ -613,7 +793,24 @@ const AI_ARCHITECTURE_CONTEXT = {
     title: section.title,
     userText: section.exampleText,
     toolExamples: section.tools,
-  })),
+  })).concat([{
+    id: "broker-report-mcp",
+    title: "Broker report MCP tools",
+    userText: "Загрузи отчет, посчитай V4-метрики, покажи комиссии и объясни результат.",
+    toolExamples: [
+      "brokerReport.upload({ fileRef: 'report.xls', accountId: 'main' })",
+      "brokerReport.getMetrics({ reportId: 'rpt_2026_07', period: 'YTD', version: 'v4' })",
+      "brokerReport.getOperations({ reportId: 'rpt_2026_07', section: 'commissions', aggregate: true })",
+      "brokerReport.getSourceRows({ reportId: 'rpt_2026_07', operationGroupId: 'commission_storage_dm' })",
+      "brokerReport.ask({ reportId: 'rpt_2026_07', question: 'Почему вырос fee drag?' })",
+    ],
+    responseExamples: [
+      "{ reportId, status, rowsRead, rowsRecognized, warnings }",
+      "{ period, version, pnl, roi, mwr, twr, feeToPnl, quality }",
+      "{ section, aggregate, items: [{ operationGroupId, title, amountRub, rows, dates }] }",
+      "{ answer, usedMetrics, sourceOperationGroups }",
+    ],
+  }]),
 };
 
 const INFO_ANTI_PATTERNS = [
@@ -989,16 +1186,34 @@ function App() {
   const [reportFilters, setReportFilters] = useState(DEFAULT_REPORT_FILTERS);
   const [uploadStatus, setUploadStatus] = useState(null);
   const [formulaKey, setFormulaKey] = useState(null);
+  const [technicalKey, setTechnicalKey] = useState(null);
   const [marketDataDetailsOpen, setMarketDataDetailsOpen] = useState(false);
   const [issuesExpanded, setIssuesExpanded] = useState(false);
   const hashScreen = location.hash.replace("#", "");
-  const initialScreen = ["v1", "v2", "v3", "scale", "history", "agents", "ops", "architecture"].includes(hashScreen) ? hashScreen : "home";
+  const initialScreen = ["v1", "v2", "v3", "v4", "scale", "history", "agents", "ops", "architecture"].includes(hashScreen) ? hashScreen : "home";
   const [screen, setScreen] = useState(initialScreen);
+  const screenRef = React.useRef(initialScreen);
 
-  function go(next) {
+  function go(next, meta) {
+    const fromScreen = screenRef.current;
+    if (fromScreen === next) return;
     setScreen(next);
+    screenRef.current = next;
     history.replaceState(null, "", next === "home" ? location.pathname : `#${next}`);
+    trackMetrikaScreen(next, fromScreen, {
+      ...meta,
+      hasData: Boolean(data),
+      reportsCount: data?.reports?.length || 0,
+    });
   }
+
+  useEffect(() => {
+    trackMetrikaScreen(initialScreen, "direct", {
+      source: "initial",
+      hasData: Boolean(data),
+      reportsCount: data?.reports?.length || 0,
+    });
+  }, []);
 
   async function upload(files) {
     if (!files.length) return;
@@ -1035,6 +1250,14 @@ function App() {
       setData(payload);
       setActiveReport(-1);
       setReportFilters(DEFAULT_REPORT_FILTERS);
+      if (window.MetrikaSPA) {
+        window.MetrikaSPA.trackGoal("spa_upload", {
+          status: payload.processing?.issues?.length ? "warning" : "success",
+          files: selectedFiles.length,
+          reports: payload.reports?.length || 0,
+          issues: payload.processing?.issues?.length || 0,
+        });
+      }
       setUploadStatus((current) => ({
         ...current,
         phase: payload.processing?.issues?.length ? "warning" : "done",
@@ -1058,6 +1281,7 @@ function App() {
   const filteredData = data ? buildFilteredDashboardData(data, reportFilters) : null;
   const report = filteredData ? getActiveReport(filteredData, activeReport) : null;
   const openFormula = (key) => setFormulaKey(key);
+  const openTechnical = (key) => setTechnicalKey(key);
   function showProcessingIssues() {
     setIssuesExpanded(true);
     requestAnimationFrame(() => {
@@ -1066,6 +1290,11 @@ function App() {
   }
 
   return h("main", { className: `shell screen-${screen}` },
+    h(MetrikaScreenTracker, {
+      screen,
+      hasData: Boolean(filteredData),
+      reportsCount: filteredData?.reports?.length || 0,
+    }),
     h(AiAgentContext, { data: filteredData, report, screen, activeReport }),
     h(Topbar, { data: filteredData, loading, upload, screen, go }),
     h(MarketDataWarning, { marketData: filteredData?.marketData, openDetails: () => setMarketDataDetailsOpen(true) }),
@@ -1086,6 +1315,11 @@ function App() {
         ? h(DashboardV3, { data: filteredData, sourceData: data, report, activeReport, setActiveReport, openFormula, reportFilters, setReportFilters })
         : h(EmptyState, { error, loading, upload, variant: "v3" })
     ),
+    screen === "v4" && h(VersionFrame, { title: "V4 · full investor report", go },
+      filteredData && report
+        ? h(DashboardV4, { data: filteredData, sourceData: data, report, activeReport, setActiveReport, openFormula, openTechnical, reportFilters, setReportFilters })
+        : h(EmptyState, { error, loading, upload, variant: "v4" })
+    ),
     INFO_PAGES[screen] && h(InfoPage, { page: INFO_PAGES[screen], pageKey: screen, go, openFormula }),
     h(ProcessingIssuesPanel, {
       processing: filteredData?.processing || uploadStatus?.processing,
@@ -1093,13 +1327,14 @@ function App() {
       setExpanded: setIssuesExpanded,
     }),
     formulaKey && h(FormulaModal, { formulaKey, close: () => setFormulaKey(null) }),
+    technicalKey && h(TechnicalModal, { metricKey: technicalKey, close: () => setTechnicalKey(null) }),
     marketDataDetailsOpen && h(MarketDataModal, { marketData: filteredData?.marketData, close: () => setMarketDataDetailsOpen(false) })
   );
 }
 
 function Topbar({ data, loading, upload, screen, go }) {
   return h("header", { className: "topbar" },
-    h("button", { className: "brandButton", onClick: () => go("home"), title: "На главную" },
+    h("button", { className: "brandButton", onClick: () => go("home", { source: "topbar" }), title: "На главную" },
       h("span", { className: "brandMark" }, "H"),
       h("span", null,
         h("b", null, "Historic Portfolio"),
@@ -1107,15 +1342,16 @@ function Topbar({ data, loading, upload, screen, go }) {
       )
     ),
     h("nav", { className: "navPills" },
-      h("button", { className: screen === "home" ? "active" : "", onClick: () => go("home") }, "Главная"),
-      h("button", { className: screen === "v1" ? "active" : "", onClick: () => go("v1") }, "V1"),
-      h("button", { className: screen === "v2" ? "active" : "", onClick: () => go("v2") }, "V2"),
-      h("button", { className: screen === "v3" ? "active" : "", onClick: () => go("v3") }, "V3"),
-      h("button", { className: screen === "scale" ? "active" : "", onClick: () => go("scale") }, "Масштаб"),
-      h("button", { className: screen === "history" ? "active" : "", onClick: () => go("history") }, "История"),
-      h("button", { className: screen === "agents" ? "active" : "", onClick: () => go("agents") }, "ИИ"),
-      h("button", { className: screen === "ops" ? "active" : "", onClick: () => go("ops") }, "Ops"),
-      h("button", { className: screen === "architecture" ? "active" : "", onClick: () => go("architecture") }, "Архитектура")
+      h("button", { className: screen === "home" ? "active" : "", onClick: () => go("home", { source: "topbar" }) }, "Главная"),
+      h("button", { className: screen === "v1" ? "active" : "", onClick: () => go("v1", { source: "topbar" }) }, "V1"),
+      h("button", { className: screen === "v2" ? "active" : "", onClick: () => go("v2", { source: "topbar" }) }, "V2"),
+      h("button", { className: screen === "v3" ? "active" : "", onClick: () => go("v3", { source: "topbar" }) }, "V3"),
+      h("button", { className: screen === "v4" ? "active" : "", onClick: () => go("v4", { source: "topbar" }) }, "V4"),
+      h("button", { className: screen === "scale" ? "active" : "", onClick: () => go("scale", { source: "topbar" }) }, "Масштаб"),
+      h("button", { className: screen === "history" ? "active" : "", onClick: () => go("history", { source: "topbar" }) }, "История"),
+      h("button", { className: screen === "agents" ? "active" : "", onClick: () => go("agents", { source: "topbar" }) }, "ИИ"),
+      h("button", { className: screen === "ops" ? "active" : "", onClick: () => go("ops", { source: "topbar" }) }, "Ops"),
+      h("button", { className: screen === "architecture" ? "active" : "", onClick: () => go("architecture", { source: "topbar" }) }, "Архитектура")
     ),
     h(UploadButton, { loading, upload })
   );
@@ -1251,14 +1487,14 @@ function Home({ data, error, loading, upload, go }) {
     twr: 6.92,
   };
   return h("section", { className: "homeHero" },
-    h("div", { className: "homeIntro" },
+    h("div", { className: "homeIntro", "data-metrika-block": "home-intro" },
       h("div", { className: "homeIntroIcon" }, h(Icon, { name: "pulse" })),
       h("p", { className: "eyebrow" }, "portfolio intelligence"),
       h("h1", null, "Загрузите брокерские отчеты и выберите формат аналитики"),
-      h("p", { className: "lead" }, "V1 сохраняет привычную логику карточек. V2 добавляет investor-метрики. V3 превращает отчет в лабораторию: категории метрик управляют графиками и состоянием страницы."),
+      h("p", { className: "lead" }, "V1 сохраняет привычную логику карточек. V2 добавляет investor-метрики. V3 превращает отчет в лабораторию. V4 объединяет все три версии, проверяет знаки операций и готовит профессиональный отчет."),
       h("div", { className: "homeActions" },
         h(UploadButton, { loading, upload }),
-        data && h("button", { className: "secondaryButton", onClick: () => go("v3") }, "Открыть V3")
+        data && h("button", { className: "secondaryButton", onClick: () => go("v4", { source: "home_cta" }) }, "Открыть V4")
       ),
       h(DownloadLinks, null),
       error && h("p", { className: "error" }, error)
@@ -1268,7 +1504,7 @@ function Home({ data, error, loading, upload, go }) {
         h("span", null, summary ? "Стоимость портфеля" : "Пример данных · загрузите Excel для реального расчета"),
         h("strong", null, summary ? formatRub(summary.portfolioValue) : formatRub(sampleMetrics.portfolioValue))
       ),
-      h("div", { className: "designCards" },
+      h("div", { className: "designCards", "data-metrika-block": "home-versions" },
         h(DesignCard, {
           badge: "V1",
           title: "Классический анализ",
@@ -1277,7 +1513,7 @@ function Home({ data, error, loading, upload, go }) {
             ["PnL", signedRub(summary.metrics.pnl)],
             ["ROI", formatPercent(summary.metrics.roi)],
           ] : [["Пример PnL", signedRub(sampleMetrics.pnl)], ["Пример ROI", formatPercent(sampleMetrics.roi)]],
-          onClick: () => go("v1"),
+          onClick: () => go("v1", { source: "home_card" }),
         }),
         h(DesignCard, {
           badge: "V2",
@@ -1287,7 +1523,7 @@ function Home({ data, error, loading, upload, go }) {
             ["MWR", formatPercent(summary.metrics.mwr)],
             ["Активы", signedRub(summary.assetChange)],
           ] : [["Пример MWR", formatPercent(sampleMetrics.mwr)], ["Пример активов", signedRub(42_100)]],
-          onClick: () => go("v2"),
+          onClick: () => go("v2", { source: "home_card" }),
           featured: true,
         }),
         h(DesignCard, {
@@ -1298,14 +1534,25 @@ function Home({ data, error, loading, upload, go }) {
             ["TWR", formatPercent(summary.advancedMetrics.twr)],
             ["Max DD", formatPercent(summary.advancedMetrics.maxDrawdown)],
           ] : [["Пример TWR", formatPercent(sampleMetrics.twr)], ["Пример DD", formatPercent(-3.4)]],
-          onClick: () => go("v3"),
+          onClick: () => go("v3", { source: "home_card" }),
+        }),
+        h(DesignCard, {
+          badge: "V4",
+          title: "Full investor report",
+          text: "Все V1/V2/V3 метрики, аудит знаков, агрегация операций и объяснение результата для профи и начинающего.",
+          metrics: data ? [
+            ["Метрик", `${countV4Metrics(summary)} шт.`],
+            ["Аудит", buildSignAudit(data, data.reports[0] || buildVirtualReport(data)).filter((item) => item.tone < 0).length ? "есть риски" : "ok"],
+          ] : [["Метрик", "20+"], ["Аудит", "ok"]],
+          onClick: () => go("v4", { source: "home_card" }),
+          featured: true,
         })
       ),
-      h("div", { className: "homeInfoCards" },
+      h("div", { className: "homeInfoCards", "data-metrika-block": "home-info" },
         Object.entries(INFO_PAGES).map(([key, page]) => h(InfoTeaser, {
           key,
           page,
-          onClick: () => go(key),
+          onClick: () => go(key, { source: "home_info_card" }),
         }))
       )
     )
@@ -1358,7 +1605,7 @@ function InfoPage({ page, pageKey, go, openFormula }) {
   const isArchitecture = pageKey === "architecture";
 
   return h("section", { className: "infoPage" },
-    h("div", { className: "infoHero" },
+    h("div", { className: "infoHero", "data-metrika-block": "info-hero" },
       h("div", null,
         h("button", { className: "backButton", onClick: () => go("home"), title: "На главную" }, "←"),
         h("p", { className: "eyebrow" }, page.eyebrow),
@@ -1378,7 +1625,7 @@ function InfoPage({ page, pageKey, go, openFormula }) {
           h(AgentReadableArchitectureContext, { key: "ai-architecture-context" })
         ]
       : h(PageDiagram, { page, pageKey, activeStep, setActiveStep }),
-    h("div", { className: "infoLayout" },
+    h("div", { className: "infoLayout", "data-metrika-block": "info-content" },
       h("div", { className: "infoCardGrid" },
         page.cards.map((card, index) => h("article", { className: "explainCard", key: card.title },
           h(Icon, { name: CARD_ICONS[index % CARD_ICONS.length] }),
@@ -1552,7 +1799,98 @@ function McpArchitectureSections() {
           section.tools.map((tool) => h("code", { key: tool }, tool))
         )
       )
-    ))
+    )),
+    h(BrokerReportMcpExample, null)
+  );
+}
+
+function BrokerReportMcpExample() {
+  const userFlow = [
+    ["1. Загрузка", "Пользователь прикладывает Excel и пишет агенту: “Разбери отчет и покажи V4 за 2026 год”."],
+    ["2. Статус", "Агент вызывает status tool и отвечает: файл принят, идет парсинг, есть предупреждения или расчет готов."],
+    ["3. Метрики", "Агент получает готовые PnL, ROI, MWR, TWR, fee drag, drawdown и не пересчитывает формулы в модели."],
+    ["4. Drill-down", "По вопросу пользователя агент запрашивает операции, исходные строки и объясняет, какие записи повлияли на цифру."],
+  ];
+  const toolResponses = [
+    [
+      "brokerReport.getProcessingStatus",
+      `{
+  "reportId": "rpt_2026_07",
+  "status": "processed_with_warnings",
+  "rowsRead": 1842,
+  "rowsRecognized": 1731,
+  "warnings": 3
+}`,
+    ],
+    [
+      "brokerReport.getMetrics",
+      `{
+  "period": "2026",
+  "version": "v4",
+  "pnl": 84200.35,
+  "roi": 7.18,
+  "mwr": 7.05,
+  "twr": 6.92,
+  "feeToPnl": 4.7,
+  "quality": "calculated_by_backend"
+}`,
+    ],
+    [
+      "brokerReport.getOperations",
+      `{
+  "section": "commissions",
+  "aggregate": true,
+  "items": [{
+    "operationGroupId": "commission_storage_dm",
+    "title": "Комиссия хранение ДМ",
+    "amountRub": -51.81,
+    "rows": 3,
+    "dates": ["30.04.26", "31.05.26"]
+  }]
+}`,
+    ],
+    [
+      "brokerReport.ask",
+      `{
+  "answer": "Fee drag вырос из-за комиссии хранения ДМ и биржевых комиссий.",
+  "usedMetrics": ["feeToPnl", "commissionsAndTaxes"],
+  "sourceOperationGroups": ["commission_storage_dm"]
+}`,
+    ],
+  ];
+
+  return h("article", { className: "mcpBlock brokerMcpExample", "data-ai-mcp-block": "broker-report-mcp" },
+    h("div", { className: "mcpBlockText" },
+      h("span", null, "пример tools mcp"),
+      h("h3", null, "Как подключить брокерский отчет к агенту через MCP"),
+      h("p", null, "Брокерский отчет становится набором typed tools: агент не читает Excel напрямую и не считает формулы сам, а вызывает загрузку, статус, метрики, операции и объяснение по проверенному backend-результату."),
+      h("div", { className: "mcpExampleText" },
+        h("strong", null, "Как пользователь взаимодействует"),
+        h("p", null, "“Загрузи мой брокерский отчет, объясни PnL и покажи, какие комиссии повлияли на результат.”")
+      )
+    ),
+    h("div", { className: "mcpRequestScheme" },
+      h("div", { className: "mcpToolExamples brokerToolExamples" },
+        h("strong", null, "Broker report tools"),
+        h("code", null, "brokerReport.upload({ fileRef: 'report.xls', accountId: 'main', requestedVersion: 'v4' })"),
+        h("code", null, "brokerReport.getProcessingStatus({ reportId: 'rpt_2026_07' })"),
+        h("code", null, "brokerReport.getMetrics({ reportId: 'rpt_2026_07', period: '2026', includeTechnicalNotes: true })"),
+        h("code", null, "brokerReport.getOperations({ reportId: 'rpt_2026_07', section: 'commissions', aggregate: true })"),
+        h("code", null, "brokerReport.getSourceRows({ reportId: 'rpt_2026_07', operationGroupId: 'commission_storage_dm' })"),
+        h("code", null, "brokerReport.ask({ reportId: 'rpt_2026_07', question: 'Почему выросли комиссии?' })")
+      ),
+      h("div", { className: "brokerDocFacts" },
+        userFlow.map(([title, text]) => h("div", { key: title },
+          h("strong", null, title),
+          h("span", null, text),
+          h("small", null, "agent -> broker-report MCP -> deterministic backend -> final answer")
+        ))
+      ),
+      h("div", { className: "mcpToolExamples brokerResponseExamples" },
+        h("strong", null, "Примеры ответов tools"),
+        toolResponses.map(([tool, response]) => h("code", { key: tool }, `${tool}\n${response}`))
+      )
+    )
   );
 }
 
@@ -1867,8 +2205,11 @@ function combineReportsClient(reports) {
     value: Number(report.metrics?.startValue || 0) === 0 ? 0 : Number(report.metrics?.pnl || 0) / Number(report.metrics.startValue) * 100,
   }));
   const twr = (periodReturns.reduce((acc, point) => acc * (1 + point.value / 100), 1) - 1) * 100;
-  const topAssets = (latest?.assets || []).slice().sort((left, right) => Math.abs(Number(right.value || 0)) - Math.abs(Number(left.value || 0))).slice(0, 12);
-  const totalAssets = Math.max(1, topAssets.reduce((sum, row) => sum + Math.abs(Number(row.value || 0)), 0));
+  const topAssets = mergeRowsByInstrument(latest?.assets || [])
+    .slice()
+    .sort((left, right) => Math.abs(Number(right.value || 0)) - Math.abs(Number(left.value || 0)))
+    .slice(0, 12);
+  const totalAssets = Math.max(1, mergeRowsByInstrument(latest?.assets || []).reduce((sum, row) => sum + Math.abs(Number(row.value || 0)), 0));
 
   return {
     portfolioValue: endValue,
@@ -2084,6 +2425,40 @@ function FormulaModal({ formulaKey, close }) {
   );
 }
 
+function TechnicalModal({ metricKey, close }) {
+  const note = technicalNoteFor(metricKey);
+  return h("div", { className: "modalOverlay", onClick: close },
+    h("div", { className: "formulaModal technicalModal", onClick: (event) => event.stopPropagation() },
+      h("div", { className: "modalHeader" },
+        h("div", null,
+          h("p", { className: "eyebrow" }, "technical"),
+          h("h2", null, note.title)
+        ),
+        h("button", { className: "modalClose", onClick: close, title: "Закрыть" }, "×")
+      ),
+      h("div", { className: "technicalNoteGrid" },
+        h("div", null, h("strong", null, "Сколько данных нужно"), h("p", null, note.data)),
+        h("div", null, h("strong", null, "Можно ли считать на ходу"), h("p", null, note.compute)),
+        h("div", null, h("strong", null, "Когда нужен background"), h("p", null, note.background)),
+        h("div", null, h("strong", null, "Что считать заранее"), h("p", null, note.precompute))
+      )
+    )
+  );
+}
+
+function technicalNoteFor(metricKey) {
+  const note = TECHNICAL_NOTES[metricKey] || {
+    data: "Нужны нормализованные строки брокерского отчета, период, валюта, источник строки и связь с исходным Excel.",
+    compute: "Для одного отчета можно считать синхронно, если данные уже разобраны backend-ом.",
+    background: "Для истории, нескольких счетов, старых форматов до 2023 года и внешних котировок лучше использовать background worker.",
+    precompute: "Хранить периодные агрегаты, версию парсера, версию формулы и исходные строки для audit/replay.",
+  };
+  return {
+    title: ADVANCED_LABELS[metricKey] || FORMULAS[metricKey]?.title || metricKey,
+    ...note,
+  };
+}
+
 function MarketDataModal({ marketData, close }) {
   const failedSymbols = marketData?.failedSymbols || [];
   const quotes = marketData?.quotes || [];
@@ -2132,6 +2507,18 @@ function InfoButton({ metric, openFormula }) {
   }, "i");
 }
 
+function TechButton({ metric, openTechnical }) {
+  if (!metric || !openTechnical) return null;
+  return h("button", {
+    className: "infoButton techButton",
+    onClick: (event) => {
+      event.stopPropagation();
+      openTechnical(metric);
+    },
+    title: "Технические нюансы расчета",
+  }, "t");
+}
+
 function VersionFrame({ title, go, children }) {
   return h("section", { className: "versionFrame" },
     h("div", { className: "versionHeader" },
@@ -2146,7 +2533,7 @@ function VersionFrame({ title, go, children }) {
 }
 
 function EmptyState({ error, loading, upload, variant = "v1" }) {
-  return h("div", { className: "empty" },
+  return h("div", { className: "empty", "data-metrika-block": "empty-state" },
     h("div", { className: "uploadDrop" },
       h("div", { className: "uploadIcon" }, "↑"),
       h("h2", null, loading ? "Файл загружается" : "Загрузите Excel-отчеты"),
@@ -2187,7 +2574,9 @@ function SampleReportPreview({ variant }) {
       ? h(SampleV2Preview, { points, breakdown, sampleRows })
       : variant === "v3"
         ? h(SampleV3Preview, { points, sampleRows })
-        : h(SampleV1Preview, { points, breakdown, sampleRows })
+        : variant === "v4"
+          ? h(SampleV4Preview, { points, breakdown, sampleRows })
+          : h(SampleV1Preview, { points, breakdown, sampleRows })
   );
 }
 
@@ -2268,6 +2657,29 @@ function SampleV3Preview({ points, sampleRows }) {
   );
 }
 
+function SampleV4Preview({ points, breakdown, sampleRows }) {
+  return h("div", { className: "dashboard v4Dashboard sampleDashboard" },
+    h("section", { className: "v4Hero" },
+      h("div", null,
+        h("p", { className: "eyebrow" }, "V1 + V2 + V3"),
+        h("h2", null, "Полный отчет для инвестора"),
+        h("p", null, "После загрузки Excel здесь появятся все метрики, аудит знаков операций, агрегация и объяснение результата.")
+      ),
+      h("div", { className: "v4HeroMetrics" },
+        h(MetricChip, { label: "PnL", value: signedRub(84_200), tone: 84_200 }),
+        h(MetricChip, { label: "ROI", value: formatPercent(7.18), tone: 7.18 }),
+        h(MetricChip, { label: "Аудит", value: "ok", tone: 1 }),
+        h(MetricChip, { label: "MOEX", value: "9 блоков", tone: 0 })
+      )
+    ),
+    h("section", { className: "v4Grid" },
+      h("div", { className: "glassPanel" }, h("div", { className: "panelTitle" }, h("h3", null, "Все метрики"), h("span", null, "пример")), h(CompactBars, { points: [{ label: "ROI", value: 7.18 }, { label: "TWR", value: 6.92 }, { label: "Max DD", value: -3.4 }] })),
+      h("div", { className: "glassPanel" }, h("div", { className: "panelTitle" }, h("h3", null, "Знаки операций"), h("span", null, "пример")), h(StackedBreakdown, { points: breakdown }))
+    ),
+    h(SamplePositionList, { rows: sampleRows })
+  );
+}
+
 function SamplePositionList({ rows }) {
   return h("div", { className: "sampleTable" },
     rows.map(([name, meta, value]) => h("div", { key: name },
@@ -2323,7 +2735,7 @@ function ReportFiltersBar({ data, filters, setFilters }) {
     });
   }
 
-  return h("section", { className: "reportFilters", "data-ai-report-filters": "true" },
+  return h("section", { className: "reportFilters", "data-ai-report-filters": "true", "data-metrika-block": "filters" },
     h("div", { className: "filterGroup periodPresetGroup" },
       h("span", null, "Период"),
       h("div", null, PERIOD_PRESETS.map(([id, label, months]) => h("button", {
@@ -2392,7 +2804,7 @@ function DashboardV1({ data, sourceData, report, activeReport, setActiveReport, 
     h(ReportFiltersBar, { data: sourceData, filters: reportFilters, setFilters: setReportFilters }),
     h(ReportTabs, { reports: data.reports, activeReport, setActiveReport }),
     h(AgentBrief, { data, report }),
-    h("section", { className: "analysisCard" },
+    h("section", { className: "analysisCard", "data-metrika-block": "v1-portfolio-change" },
       h("div", { className: "cardHeader" },
         h("div", null,
           h("h2", null, "Как менялся портфель"),
@@ -2408,7 +2820,7 @@ function DashboardV1({ data, sourceData, report, activeReport, setActiveReport, 
         h(BreakdownList, { points: report.breakdown })
       )
     ),
-    h("section", { className: "grid four" },
+    h("section", { className: "grid four", "data-metrika-block": "v1-kpis" },
       h(Kpi, { title: "PnL", value: report.metrics.pnl, metric: "pnl", openFormula }),
       h(KpiPercent, { title: "ROI", value: report.metrics.roi, metric: "roi", openFormula }),
       h(KpiPercent, { title: "MWR", value: report.metrics.mwr, metric: "mwr", openFormula }),
@@ -2421,7 +2833,7 @@ function DashboardV1({ data, sourceData, report, activeReport, setActiveReport, 
       netCashFlow: report.metrics.netCashFlow,
     }),
     h(ContributionLeaders, { report: filteredReport }),
-    h("section", { className: "grid two" },
+    h("section", { className: "grid two", "data-metrika-block": "v1-charts" },
       h(PanelChart, { title: "Динамика по датам отчетов", meta: `${includedReports.length} период(а) в итогах`, points: buildReportMetricSeries(includedReports, "pnl") }),
       h(PanelChart, { title: "Из чего складывается результат", meta: signedRub(summary.portfolioChange), points: summary.breakdown })
     ),
@@ -2431,7 +2843,7 @@ function DashboardV1({ data, sourceData, report, activeReport, setActiveReport, 
       h(Kpi, { title: "Комиссии и налоги", value: summary.commissionsAndTaxes }),
       h(Kpi, { title: "Пополнения и выводы", value: summary.depositsAndWithdrawals })
     ),
-    h("section", { className: "grid two" },
+    h("section", { className: "grid two", "data-metrika-block": "v1-tables" },
       h(DetailTable, { title: "Крупные позиции", rows: filteredReport.assets, empty: "Позиции не найдены" }),
       h(DetailTable, { title: "Сделки", rows: filteredReport.trades, empty: "Сделки не найдены" })
     ),
@@ -2456,7 +2868,7 @@ function DashboardV2({ data, sourceData, report, activeReport, setActiveReport, 
     h(ReportFiltersBar, { data: sourceData, filters: reportFilters, setFilters: setReportFilters }),
     h(ReportTabs, { reports: data.reports, activeReport, setActiveReport }),
     h(AgentBrief, { data, report }),
-    h("section", { className: "cockpitHero" },
+    h("section", { className: "cockpitHero", "data-metrika-block": "v2-hero" },
       h("div", { className: "cockpitMain" },
         h("p", { className: "eyebrow" }, report.period),
         h("h2", null, "Инвесторский результат периода"),
@@ -2473,7 +2885,7 @@ function DashboardV2({ data, sourceData, report, activeReport, setActiveReport, 
         h("p", null, "ROI показывает доходность к начальной стоимости. MWR приближает денежно-взвешенную доходность с учетом потоков.")
       )
     ),
-    h("section", { className: "metricRunway" },
+    h("section", { className: "metricRunway", "data-metrika-block": "v2-metrics" },
       h(ModernMetricCard, { label: "PnL", value: signedRub(activeMetrics.pnl), sub: "финансовый результат", tone: activeMetrics.pnl, metric: "pnl", openFormula }),
       h(ModernMetricCard, { label: "ROI", value: formatPercent(activeMetrics.roi), sub: "доходность периода", tone: activeMetrics.roi, metric: "roi", openFormula }),
       h(ModernMetricCard, { label: "MWR", value: formatPercent(activeMetrics.mwr), sub: "money-weighted return", tone: activeMetrics.mwr, metric: "mwr", openFormula }),
@@ -2489,7 +2901,7 @@ function DashboardV2({ data, sourceData, report, activeReport, setActiveReport, 
     h("section", { className: "v2Grid singleGrid" },
       h(InvestorIndicators, { report, summary })
     ),
-    h("section", { className: "v2Grid" },
+    h("section", { className: "v2Grid", "data-metrika-block": "v2-charts" },
       h("div", { className: "glassPanel wide" },
         h("div", { className: "panelTitle" },
           h("h3", null, "Momentum"),
@@ -2505,7 +2917,7 @@ function DashboardV2({ data, sourceData, report, activeReport, setActiveReport, 
         h(StackedBreakdown, { points: report.breakdown })
       )
     ),
-    h("section", { className: "v2Grid" },
+    h("section", { className: "v2Grid", "data-metrika-block": "v2-tables" },
       h(DetailTable, { title: "Позиции", rows: filteredReport.assets, empty: "Позиции не найдены", modern: true }),
       h(DetailTable, { title: "Операции и доходы", rows: [...filteredReport.trades, ...filteredReport.incomeRows, ...(filteredReport.expectedIncomeRows || []), ...filteredReport.commissionRows], empty: "Операции не найдены", modern: true })
     )
@@ -2532,7 +2944,7 @@ function DashboardV3({ data, sourceData, report, activeReport, setActiveReport, 
     h(ReportFiltersBar, { data: sourceData, filters: reportFilters, setFilters: setReportFilters }),
     h(ReportTabs, { reports: data.reports, activeReport, setActiveReport }),
     h(AgentBrief, { data, report }),
-    h("section", { className: "labHero" },
+    h("section", { className: "labHero", "data-metrika-block": "v3-hero" },
       h("div", null,
         h("p", { className: "eyebrow" }, "stateful analytics"),
         h("h2", null, "V3 связывает фильтры, категории и графики"),
@@ -2557,7 +2969,7 @@ function DashboardV3({ data, sourceData, report, activeReport, setActiveReport, 
       activePerformanceMetric,
       setActivePerformanceMetric,
     }),
-    h("section", { className: "v3Notes singleGrid" },
+    h("section", { className: "v3Notes singleGrid", "data-metrika-block": "v3-notes" },
       h("div", { className: "glassPanel" },
         h("div", { className: "panelTitle" },
           h("h3", null, "Ограничения расчета"),
@@ -2574,9 +2986,395 @@ function DashboardV3({ data, sourceData, report, activeReport, setActiveReport, 
   );
 }
 
+function DashboardV4({ data, sourceData, report, activeReport, setActiveReport, openFormula, openTechnical, reportFilters, setReportFilters }) {
+  const [selectedLabCategories, setSelectedLabCategories] = useState(["performance", "risk", "costs"]);
+  const [activePerformanceMetric, setActivePerformanceMetric] = useState("twr");
+  const [activeConcentrationMetric, setActiveConcentrationMetric] = useState("top1Concentration");
+  const summary = data.summary;
+  const advanced = summary.advancedMetrics;
+  const effectiveFilters = normalizeReportFilters(reportFilters, getReportDateBounds(getIncludedReports(sourceData)));
+  const filteredReport = filterReportDetails(report, effectiveFilters);
+  const includedReports = getIncludedReports(data);
+  const signAudit = buildSignAudit(data, report);
+  const operationSummary = buildOperationAggregation(filteredReport);
+  const metricRows = buildV4MetricRows(summary, report);
+  const selectedCategories = ADVANCED_CATEGORIES
+    .filter((category) => category.id !== "concentration" && selectedLabCategories.includes(category.id));
+
+  function toggleLabCategory(id) {
+    setSelectedLabCategories((current) => {
+      if (current.includes(id)) {
+        return current.length === 1 ? current : current.filter((item) => item !== id);
+      }
+      return [...current, id];
+    });
+  }
+
+  return h("div", { className: "dashboard v4Dashboard", "data-ai-v4-report": "true" },
+    h(ReportFiltersBar, { data: sourceData, filters: reportFilters, setFilters: setReportFilters }),
+    h(ReportTabs, { reports: data.reports, activeReport, setActiveReport }),
+    h(AgentBrief, { data, report }),
+    h("section", { className: "v4Hero", "data-metrika-block": "v4-hero" },
+      h("div", null,
+        h("p", { className: "eyebrow" }, "V1 + V2 + V3 + broker report docs"),
+        h("h2", null, "V4 собирает полный инвесторский отчет"),
+        h("p", null, "Экран объединяет базовую аналитику, cockpit-метрики и metric lab, а сверху добавляет контроль знаков операций, агрегацию и объяснение результата.")
+      ),
+      h("div", { className: "v4HeroMetrics" },
+        h(MetricChip, { label: "PnL", value: signedRub(report.metrics.pnl), tone: report.metrics.pnl, metric: "pnl", openFormula }),
+        h(MetricChip, { label: "ROI", value: formatPercent(report.metrics.roi), tone: report.metrics.roi, metric: "roi", openFormula }),
+        h(MetricChip, { label: "MWR", value: formatPercent(report.metrics.mwr), tone: report.metrics.mwr, metric: "mwr", openFormula }),
+        h(MetricChip, { label: "TWR", value: formatPercent(advanced.twr), tone: advanced.twr, metric: "twr", openFormula })
+      )
+    ),
+    h("section", { className: "v4ExecutiveGrid", "data-metrika-block": "v4-executive" },
+      h(V4ExecutivePanel, { title: "Для начинающего", rows: buildBeginnerNarrative(summary, report) }),
+      h(V4ExecutivePanel, { title: "Для проф-инвестора", rows: buildProfessionalNarrative(summary, report) })
+    ),
+    h(V4ConcentrationBlock, {
+      data,
+      report,
+      includedReports,
+      activeMetric: activeConcentrationMetric,
+      setActiveMetric: setActiveConcentrationMetric,
+      openFormula,
+    }),
+    h("section", { className: "v4Grid", "data-metrika-block": "v4-audit" },
+      h("div", { className: "glassPanel" },
+        h("div", { className: "panelTitle" },
+          h("div", null, h("h3", null, "Аудит знаков и баланса"), h("span", null, "что влияет на PnL, MWR и разложение результата")),
+          h("span", null, `${signAudit.filter((item) => item.tone < 0).length} риск.`)
+        ),
+        h("div", { className: "v4AuditList" },
+          signAudit.map((item) => h("div", { className: `v4AuditItem ${classForValue(item.tone)}`, key: item.title },
+            h("strong", null, item.title),
+            h("span", null, item.value),
+            h("small", null, item.text)
+          ))
+        )
+      ),
+      h("div", { className: "glassPanel" },
+        h("div", { className: "panelTitle" },
+          h("div", null, h("h3", null, "Агрегация операций"), h("span", null, "по текущим фильтрам и выбранному периоду")),
+          h("span", null, `${operationSummary.reduce((acc, item) => acc + item.count, 0)} строк`)
+        ),
+        h("div", { className: "v4OperationGrid" },
+          operationSummary.map((item) => h("div", { key: item.title },
+            h("span", null, item.title),
+            h("strong", { className: classForValue(item.total) }, signedRub(item.total)),
+            h("small", null, `${item.count} строк · ${item.policy}`)
+          ))
+        )
+      )
+    ),
+    h("section", { className: "v4MetricInventory", "data-metrika-block": "v4-metrics" },
+      h("div", { className: "panelTitle" },
+        h("div", null, h("h3", null, "Все метрики V4"), h("span", null, "базовые, риск, доход, валюта и издержки")),
+        h("span", null, `${metricRows.length}`)
+      ),
+      h("div", { className: "v4MetricGroups" },
+        V4_METRIC_GROUPS.map(([group, keys]) => h("div", { className: "v4MetricGroup", key: group },
+          h("strong", null, group),
+          keys.map((key) => {
+            const metric = metricRows.find((item) => item.key === key);
+            if (!metric) return null;
+            return h("div", {
+              key,
+              className: "v4MetricLine",
+              "data-ai-metric": key,
+              "data-ai-value": String(metric.value ?? ""),
+            },
+              h("span", { className: "v4MetricActions" },
+                h(InfoButton, { metric: metric.formula, openFormula }),
+                h(TechButton, { metric: key, openTechnical })
+              ),
+              h("span", null, metric.label),
+              h("b", { className: classForValue(metric.tone) }, metric.value),
+              h("small", null, metric.source)
+            );
+          })
+        ))
+      )
+    ),
+    h(PeriodChain, { reports: data.reports }),
+    h(ContributionLeaders, { report: filteredReport }),
+    h(CategoryFilters, { selected: selectedLabCategories, toggleCategory: toggleLabCategory, exclude: ["concentration"] }),
+    h(CategoryGroups, {
+      data,
+      report: filteredReport,
+      selectedCategories,
+      includedReports,
+      openFormula,
+      activePerformanceMetric,
+      setActivePerformanceMetric,
+    }),
+    h("section", { className: "v4Grid", "data-metrika-block": "v4-tables" },
+      h(DetailTable, { title: "Крупные позиции", rows: filteredReport.assets, empty: "Позиции не найдены", modern: true }),
+      h(DetailTable, { title: "Все операции V4", rows: [
+        ...filteredReport.trades,
+        ...filteredReport.incomeRows,
+        ...(filteredReport.expectedIncomeRows || []),
+        ...filteredReport.commissionRows,
+      ], empty: "Операции не найдены", modern: true })
+    ),
+    h("section", { className: "v4Grid", "data-metrika-block": "v4-charts" },
+      h("div", { className: "glassPanel" },
+        h("div", { className: "panelTitle" }, h("h3", null, "Доходность по периодам"), h("span", null, `${includedReports.length}`)),
+        h(LineChart, { points: buildPerformanceMetricSeries(data, includedReports, activePerformanceMetric), valueFormatter: MONEY_METRICS.has(activePerformanceMetric) ? signedRub : formatPercent })
+      ),
+      h("div", { className: "glassPanel" },
+        h("div", { className: "panelTitle" }, h("h3", null, "Состав результата"), h("span", { className: classForValue(summary.portfolioChange) }, signedRub(summary.portfolioChange))),
+        h(StackedBreakdown, { points: summary.breakdown })
+      )
+    )
+  );
+}
+
+function V4ExecutivePanel({ title, rows }) {
+  return h("div", { className: "v4ExecutivePanel" },
+    h("h3", null, title),
+    rows.map((row) => h("div", { key: row.label },
+      h("span", null, row.label),
+      h("strong", { className: classForValue(row.tone) }, row.value),
+      h("small", null, row.text)
+    ))
+  );
+}
+
+function V4ConcentrationBlock({ data, report, includedReports, activeMetric, setActiveMetric, openFormula }) {
+  const category = ADVANCED_CATEGORIES.find((item) => item.id === "concentration");
+  const advanced = data.summary.advancedMetrics;
+
+  return h("section", { className: "v4ConcentrationBlock categoryGroup glassPanel", "data-metrika-block": "concentration" },
+    h("div", { className: "panelTitle" },
+      h("div", null,
+        h("h3", null, category.title),
+        h("span", null, category.text)
+      ),
+      h("span", null, `${CONCENTRATION_METRICS.length} метрик`)
+    ),
+    h(ConcentrationMetricBlock, {
+      data,
+      report,
+      category,
+      activeMetric,
+      setActiveMetric,
+      openFormula,
+    }),
+    h("div", { className: "categoryChart" },
+      h(ChartPeriodStamp, { report, reports: includedReports }),
+      h("div", { className: "selectedChartMetric" },
+        h("span", null, "На графике"),
+        h("strong", null, ADVANCED_LABELS[activeMetric] || activeMetric)
+      ),
+      h(LineChart, {
+        points: buildConcentrationMetricSeries(includedReports, activeMetric),
+        valueFormatter: formatPercent,
+      }),
+      h(CompactBars, { points: [
+        { label: "Top-1", value: advanced.top1Concentration },
+        { label: "Top-3", value: advanced.top3Concentration },
+        { label: "Top-5", value: advanced.top5Concentration },
+      ] })
+    )
+  );
+}
+
+function ConcentrationMetricBlock({ data, report, category, activeMetric, setActiveMetric, openFormula }) {
+  return h("div", { className: "performanceMetricBlock concentrationMetricBlock" },
+    h("div", { className: "performanceMetricHeader" },
+      h("strong", null, category.title),
+      h("span", null, "клик по значению меняет график по датам")
+    ),
+    h("div", { className: "performanceMetricGrid" },
+      category.metrics.map((metric) => {
+        const value = readAdvancedMetric(data, report, metric);
+        const active = metric === activeMetric;
+        return h("div", {
+          key: metric,
+          className: `performanceMetricValue ${active ? "active" : ""} ${classForValue(-value)}`,
+          "data-ai-metric": metric,
+          "data-ai-value": String(value ?? ""),
+          "data-ai-category": category.title,
+          role: "button",
+          tabIndex: 0,
+          onClick: () => setActiveMetric(metric),
+          onKeyDown: (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              setActiveMetric(metric);
+            }
+          },
+        },
+          h(InfoButton, { metric, openFormula }),
+          h("span", null, ADVANCED_LABELS[metric] || metric),
+          h("strong", null, formatAdvancedValue(metric, value)),
+          h("small", null, active ? "на графике" : "показать по датам")
+        );
+      })
+    )
+  );
+}
+
+function buildBeginnerNarrative(summary, report) {
+  return [
+    {
+      label: "Результат",
+      value: signedRub(report.metrics.pnl),
+      tone: report.metrics.pnl,
+      text: "PnL уже очищен от пополнений и выводов, поэтому показывает инвестиционный результат периода.",
+    },
+    {
+      label: "Доходность",
+      value: formatPercent(report.metrics.roi),
+      tone: report.metrics.roi,
+      text: "ROI удобен для простого сравнения с начальной стоимостью портфеля.",
+    },
+    {
+      label: "Деньги клиента",
+      value: signedRub(report.metrics.netCashFlow),
+      tone: report.metrics.netCashFlow,
+      text: "Положительное значение означает чистое пополнение, отрицательное значение означает чистый вывод.",
+    },
+    {
+      label: "Доходы",
+      value: signedRub(report.couponsAndDividends),
+      tone: report.couponsAndDividends,
+      text: "Купоны и дивиденды отделены от переоценки активов.",
+    },
+  ];
+}
+
+function buildProfessionalNarrative(summary, report) {
+  const advanced = summary.advancedMetrics;
+  return [
+    {
+      label: "TWR / MWR",
+      value: `${formatPercent(advanced.twr)} / ${formatPercent(report.metrics.mwr)}`,
+      tone: advanced.twr || report.metrics.mwr,
+      text: "TWR показывает качество управления без влияния потоков, MWR учитывает timing пополнений и выводов.",
+    },
+    {
+      label: "Risk-adjusted",
+      value: `Sharpe ${plain.format(advanced.sharpe)} · Sortino ${plain.format(advanced.sortino)}`,
+      tone: advanced.sharpe,
+      text: "Risk-free rate принят равным 0%, поэтому это операционная оценка для сравнения периодов.",
+    },
+    {
+      label: "Drawdown / Vol",
+      value: `${formatPercent(advanced.maxDrawdown)} / ${formatPercent(advanced.volatility)}`,
+      tone: advanced.maxDrawdown,
+      text: "Показывает глубину просадки и разброс периодных доходностей.",
+    },
+    {
+      label: "Fee drag",
+      value: `${formatPercent(advanced.feeToPnl)} к PnL`,
+      tone: -advanced.feeToPnl,
+      text: "Комиссии и налоги нормализуются отрицательным знаком, возвраты учитываются положительно.",
+    },
+  ];
+}
+
+function buildSignAudit(data, report) {
+  const summary = data.summary;
+  const balanceDiff = round2(summary.portfolioChange - (summary.assetChange + summary.couponsAndDividends + summary.commissionsAndTaxes + summary.depositsAndWithdrawals));
+  const commissionSignOk = (report.commissionRows || []).every((row) => Number(row.value || 0) <= 0 || /возврат|refund|сторно/i.test(rowSearchText(row)));
+  const cashFlowText = report.metrics.netCashFlow > 0
+    ? "чистое пополнение"
+    : report.metrics.netCashFlow < 0
+      ? "чистый вывод"
+      : "нулевой поток";
+  const processingIssues = data.processing?.issues?.length || 0;
+  const skipped = data.processing?.files?.reduce((acc, file) => acc + Number(file.rowsSkipped || 0), 0) || 0;
+
+  return [
+    {
+      title: "Баланс результата",
+      value: signedRub(balanceDiff),
+      tone: Math.abs(balanceDiff) < 0.01 ? 1 : -1,
+      text: "Проверка: изменение портфеля = активы + доходы + комиссии/налоги + пополнения/выводы.",
+    },
+    {
+      title: "Комиссии и налоги",
+      value: commissionSignOk ? "знак отрицательный" : "проверьте строки",
+      tone: commissionSignOk ? 1 : -1,
+      text: "Расходы уменьшают результат; возврат комиссии или налога может быть положительным.",
+    },
+    {
+      title: "Денежный поток",
+      value: `${cashFlowText}: ${signedRub(report.metrics.netCashFlow)}`,
+      tone: 0,
+      text: "Пополнение учитывается плюсом, вывод минусом; weighted cash flow идет в MWR.",
+    },
+    {
+      title: "Распознавание строк",
+      value: `${processingIssues} предупрежд. · ${skipped} пропущ.`,
+      tone: processingIssues || skipped ? -1 : 1,
+      text: "Профессиональный отчет должен смотреть не только цифры, но и покрытие парсинга строк Excel.",
+    },
+    {
+      title: "Пересечения периодов",
+      value: `${data.reports.filter((item) => !item.includedInSummary).length} исключено`,
+      tone: data.reports.some((item) => !item.includedInSummary) ? 0 : 1,
+      text: "Пересекающиеся отчеты не попадают в итоговую цепочку, чтобы не задваивать PnL.",
+    },
+  ];
+}
+
+function buildOperationAggregation(report) {
+  const groups = [
+    ["Сделки", report.trades || [], "знак берется из строки отчета; оборот считается по модулю"],
+    ["Купоны и дивиденды", report.incomeRows || [], "доходы интерпретируются как положительный вклад"],
+    ["Ожидаемый доход", report.expectedIncomeRows || [], "справочный поток, не должен безусловно входить в PnL"],
+    ["Комиссии и налоги", report.commissionRows || [], "расходы отрицательные, возвраты положительные"],
+  ];
+  return groups.map(([title, rows, policy]) => ({
+    title,
+    count: rows.length,
+    total: round2(rows.reduce((acc, row) => acc + Number(row.value || 0), 0)),
+    policy,
+  }));
+}
+
+function buildV4MetricRows(summary, report) {
+  const advanced = summary.advancedMetrics;
+  const rows = [
+    ["pnl", "PnL", signedRub(report.metrics.pnl), report.metrics.pnl, "report.metrics", "pnl"],
+    ["roi", "ROI", formatPercent(report.metrics.roi), report.metrics.roi, "report.metrics", "roi"],
+    ["mwr", "MWR", formatPercent(report.metrics.mwr), report.metrics.mwr, "report.metrics", "mwr"],
+    ["twr", "TWR", formatPercent(advanced.twr), advanced.twr, "summary.advancedMetrics", "twr"],
+    ["realizedPnl", "Realized PnL", signedRub(advanced.realizedPnl), advanced.realizedPnl, "summary.advancedMetrics", "realizedPnl"],
+    ["unrealizedPnl", "Unrealized PnL", signedRub(advanced.unrealizedPnl), advanced.unrealizedPnl, "summary.advancedMetrics", "unrealizedPnl"],
+    ["maxDrawdown", "Max drawdown", formatPercent(advanced.maxDrawdown), advanced.maxDrawdown, "summary.advancedMetrics", "maxDrawdown"],
+    ["volatility", "Volatility", formatPercent(advanced.volatility), -advanced.volatility, "summary.advancedMetrics", "volatility"],
+    ["sharpe", "Sharpe", plain.format(advanced.sharpe), advanced.sharpe, "summary.advancedMetrics", "sharpe"],
+    ["sortino", "Sortino", plain.format(advanced.sortino), advanced.sortino, "summary.advancedMetrics", "sortino"],
+    ["netCashFlow", "Net cash flow", signedRub(report.metrics.netCashFlow), report.metrics.netCashFlow, "report.metrics", "mwr"],
+    ["weightedCashFlow", "Weighted cash flow", signedRub(report.metrics.weightedCashFlow), report.metrics.weightedCashFlow, "report.metrics", "mwr"],
+    ["feeToPnl", "Комиссии / PnL", formatPercent(advanced.feeToPnl), -advanced.feeToPnl, "summary.advancedMetrics", "feeToPnl"],
+    ["feeToPortfolio", "Комиссии / портфель", formatPercent(advanced.feeToPortfolio), -advanced.feeToPortfolio, "summary.advancedMetrics", "feeToPortfolio"],
+    ["turnover", "Turnover", formatPercent(advanced.turnover), 0, "summary.advancedMetrics", "turnover"],
+    ["incomeYield", "Income yield", formatPercent(advanced.incomeYield), advanced.incomeYield, "summary.advancedMetrics", "incomeYield"],
+    ["incomeShareOfReturn", "Доля дохода", formatPercent(advanced.incomeShareOfReturn), advanced.incomeShareOfReturn, "summary.advancedMetrics", "incomeShareOfReturn"],
+    ["top1Concentration", "Top-1", formatPercent(advanced.top1Concentration), -advanced.top1Concentration, "summary.advancedMetrics", "top1Concentration"],
+    ["top3Concentration", "Top-3", formatPercent(advanced.top3Concentration), -advanced.top3Concentration, "summary.advancedMetrics", "top3Concentration"],
+    ["top5Concentration", "Top-5", formatPercent(advanced.top5Concentration), -advanced.top5Concentration, "summary.advancedMetrics", "top5Concentration"],
+    ["rubExposure", "RUB exposure", formatPercent(advanced.rubExposure), 0, "summary.advancedMetrics", "rubExposure"],
+    ["usdExposure", "USD exposure", formatPercent(advanced.usdExposure), 0, "summary.advancedMetrics", "usdExposure"],
+    ["otherCurrencyExposure", "Other exposure", formatPercent(advanced.otherCurrencyExposure), 0, "summary.advancedMetrics", "otherCurrencyExposure"],
+    ["fxImpact", "FX impact", signedRub(advanced.fxImpact), advanced.fxImpact, "summary.advancedMetrics", "fxImpact"],
+  ];
+  return rows.map(([key, label, value, tone, source, formula]) => ({ key, label, value, tone, source, formula }));
+}
+
+function countV4Metrics(summary) {
+  if (!summary) return 0;
+  return buildV4MetricRows(summary, { metrics: summary.metrics }).length;
+}
+
 function ContributionLeaders({ report }) {
   const leaders = buildContributionLeaders(report);
-  return h("section", { className: "contributionLeaders" },
+  return h("section", { className: "contributionLeaders", "data-metrika-block": "contribution-leaders" },
     h("div", { className: "panelTitle" },
       h("div", null,
         h("h3", null, "Топ вкладов в результат"),
@@ -2607,9 +3405,9 @@ function LeaderColumn({ title, rows, tone }) {
   );
 }
 
-function CategoryFilters({ selected, toggleCategory }) {
-  return h("section", { className: "categoryFilters" },
-    ADVANCED_CATEGORIES.map((category) => {
+function CategoryFilters({ selected, toggleCategory, exclude = [] }) {
+  return h("section", { className: "categoryFilters", "data-metrika-block": "category-filters" },
+    ADVANCED_CATEGORIES.filter((category) => !exclude.includes(category.id)).map((category) => {
       const active = selected.includes(category.id);
       return h("button", {
         key: category.id,
@@ -2647,7 +3445,7 @@ function CategoryGroups({
   activePerformanceMetric,
   setActivePerformanceMetric,
 }) {
-  return h("section", { className: "categoryGroups" },
+  return h("section", { className: "categoryGroups", "data-metrika-block": "category-groups" },
     selectedCategories.map((category) => h("div", { className: "categoryGroup glassPanel", key: category.id },
       h("div", { className: "panelTitle" },
         h("div", null,
@@ -2724,7 +3522,7 @@ function PerformanceMetricBlock({ data, report, category, activeMetric, setActiv
 }
 
 function PeriodChain({ reports }) {
-  return h("section", { className: "periodChain" },
+  return h("section", { className: "periodChain", "data-metrika-block": "period-chain" },
     h("div", { className: "panelTitle" },
       h("h3", null, "Цепочка периодов"),
       h("span", null, "с учетом пересечений")
@@ -2852,11 +3650,11 @@ function getFilteredReports(reports, filters) {
 function filterReportDetails(report, filters) {
   return {
     ...report,
-    assets: (report.assets || []).filter((row) => rowMatchesReportFilters(row, filters)),
-    trades: (report.trades || []).filter((row) => rowMatchesReportFilters(row, filters)),
-    incomeRows: (report.incomeRows || []).filter((row) => rowMatchesReportFilters(row, filters)),
-    expectedIncomeRows: (report.expectedIncomeRows || []).filter((row) => rowMatchesReportFilters(row, filters)),
-    commissionRows: (report.commissionRows || []).filter((row) => rowMatchesReportFilters(row, filters)),
+    assets: mergeRowsByInstrument((report.assets || []).filter((row) => rowMatchesReportFilters(row, filters))),
+    trades: mergeRowsByInstrument((report.trades || []).filter((row) => rowMatchesReportFilters(row, filters))),
+    incomeRows: mergeRowsByInstrument((report.incomeRows || []).filter((row) => rowMatchesReportFilters(row, filters))),
+    expectedIncomeRows: mergeRowsByInstrument((report.expectedIncomeRows || []).filter((row) => rowMatchesReportFilters(row, filters))),
+    commissionRows: mergeRowsByInstrument((report.commissionRows || []).filter((row) => rowMatchesReportFilters(row, filters))),
   };
 }
 
@@ -2921,13 +3719,12 @@ function rowSearchText(row) {
 }
 
 function buildContributionLeaders(report) {
-  const rows = [
+  const rows = mergeRowsByInstrument([
     ...(report.assets || []),
     ...(report.trades || []),
     ...(report.incomeRows || []),
     ...(report.expectedIncomeRows || []),
-    ...(report.commissionRows || []),
-  ]
+  ])
     .filter((row) => row?.title && Number.isFinite(Number(row.value)))
     .map((row) => ({
       title: row.title,
@@ -3055,6 +3852,62 @@ function buildPerformanceMetricSeries(data, reports, metric) {
   return buildReportMetricSeries(reports, metric);
 }
 
+function buildConcentrationMetricSeries(reports, metric) {
+  const topN = metric === "top1Concentration" ? 1 : metric === "top3Concentration" ? 3 : 5;
+  return reports.map((report) => {
+    const merged = mergeRowsByInstrument(report.assets || [])
+      .sort((left, right) => Math.abs(Number(right.value || 0)) - Math.abs(Number(left.value || 0)));
+    const total = Math.max(1, merged.reduce((sum, row) => sum + Math.abs(Number(row.value || 0)), 0));
+    const topSum = merged.slice(0, topN).reduce((sum, row) => sum + Math.abs(Number(row.value || 0)), 0);
+    return {
+      label: formatReportDateRange(report),
+      value: round2(topSum / total * 100),
+    };
+  });
+}
+
+function instrumentAggregationKey(row) {
+  let title = String(row?.title || "").trim();
+  if (title.toLowerCase().startsWith("начислено:")) {
+    title = title.slice("Начислено:".length).trim();
+  }
+  title = title.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
+  return title || String(row?.title || "");
+}
+
+function mergeRowsByInstrument(rows) {
+  const groups = new Map();
+  (rows || []).forEach((row) => {
+    const key = instrumentAggregationKey(row);
+    const normalizedKey = key.toLowerCase();
+    const existing = groups.get(normalizedKey);
+    if (!existing) {
+      groups.set(normalizedKey, {
+        ...row,
+        title: key,
+        value: round2(Number(row.value || 0)),
+        columns: { ...(row.columns || {}) },
+      });
+      return;
+    }
+
+    const count = Number(existing.columns?.["Количество строк"] || 1) + 1;
+    existing.value = round2(existing.value + Number(row.value || 0));
+    existing.columns = {
+      ...existing.columns,
+      ...(row.columns || {}),
+      "Количество строк": String(count),
+    };
+    if (count > 1) {
+      const base = String(existing.subtitle || row.subtitle || "")
+        .replace(/^\d+\s+(строк|операций)\s*·\s*/i, "")
+        .trim();
+      existing.subtitle = base ? `${count} строк · ${base}` : `${count} строк`;
+    }
+  });
+  return Array.from(groups.values());
+}
+
 function attachDateLabels(points, reports) {
   return points.map((point, index) => ({
     ...point,
@@ -3159,6 +4012,7 @@ function AgentBrief({ data, report }) {
     className: `glassPanel agentPanel agentHandoff ${expanded ? "expanded" : "collapsed"}`,
     "data-ai-agent-handoff": "true",
     "data-ai-expanded": String(expanded),
+    "data-metrika-block": "agent-brief",
   },
     h("div", { className: "panelTitle agentHandoffHeader" },
       h("div", null,
@@ -3198,7 +4052,7 @@ function buildAgentPrompt(data, report) {
 }
 
 function ReportTabs({ reports, activeReport, setActiveReport }) {
-  return h("div", { className: "periodTabs" },
+  return h("div", { className: "periodTabs", "data-metrika-block": "report-tabs" },
     h("button", {
       key: "virtual-period",
       className: activeReport === -1 ? "active virtual" : "virtual",

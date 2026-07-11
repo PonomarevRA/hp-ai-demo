@@ -16,7 +16,7 @@
             k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)
         })(window, document,'script','https://mc.yandex.ru/metrika/tag.js?id=110578140', 'ym');
 
-        ym(110578140, 'init', {ssr:true, webvisor:true, clickmap:true, ecommerce:"dataLayer", referrer: document.referrer, url: location.href, accurateTrackBounce:true, trackLinks:true});
+        ym(110578140, 'init', {defer:true, ssr:true, webvisor:true, clickmap:true, ecommerce:"dataLayer", referrer: document.referrer, url: location.href, accurateTrackBounce:true, trackLinks:true, triggerEvent:true});
     </script>
     <!-- /Yandex.Metrika counter -->
 </head>
@@ -25,6 +25,7 @@
     <div id="root"></div>
     <script src="/vendor/react.production.min.js"></script>
     <script src="/vendor/react-dom.production.min.js"></script>
+    <script src="/metrika.js"></script>
     <script src="/app.js"></script>
 </body>
 </html>

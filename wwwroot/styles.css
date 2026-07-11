@@ -327,6 +327,10 @@ p {
   transform: translateY(-1px);
 }
 
+.techButton {
+  top: 36px;
+}
+
 .modalOverlay {
   position: fixed;
   inset: 0;
@@ -386,6 +390,29 @@ p {
 
 .formulaModal p:not(.eyebrow) {
   margin-top: 14px;
+  color: var(--muted);
+}
+
+.technicalModal {
+  width: min(720px, 100%);
+}
+
+.technicalNoteGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.technicalNoteGrid div {
+  display: grid;
+  gap: 6px;
+  padding: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.technicalNoteGrid p {
+  margin: 0;
   color: var(--muted);
 }
 
@@ -2578,8 +2605,28 @@ circle.negative {
     #151a22;
 }
 
+.v4Hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.72fr);
+  gap: 18px;
+  padding: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 22px;
+  background:
+    linear-gradient(135deg, rgba(25, 201, 107, 0.16), transparent 46%),
+    linear-gradient(315deg, rgba(75, 116, 255, 0.16), transparent 34%),
+    #151a22;
+}
+
 .labHero h2 {
   max-width: 820px;
+  margin-top: 10px;
+  font-size: clamp(32px, 5vw, 62px);
+  line-height: 1;
+}
+
+.v4Hero h2 {
+  max-width: 860px;
   margin-top: 10px;
   font-size: clamp(32px, 5vw, 62px);
   line-height: 1;
@@ -2592,11 +2639,213 @@ circle.negative {
   font-size: 16px;
 }
 
+.v4Hero p:not(.eyebrow) {
+  max-width: 800px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 16px;
+}
+
 .labHeroMetrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   align-content: center;
+}
+
+.v4HeroMetrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-content: center;
+}
+
+.v4ExecutiveGrid,
+.v4Grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.v4ConcentrationBlock {
+  margin-top: 16px;
+}
+
+.v4ConcentrationBlock .categoryChart {
+  display: grid;
+  gap: 12px;
+}
+
+.concentrationMetricBlock .performanceMetricValue {
+  cursor: pointer;
+}
+
+.v4ExecutivePanel,
+.v4MetricInventory {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background: var(--glass);
+  backdrop-filter: blur(18px);
+}
+
+.v4ExecutivePanel {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+}
+
+.v4ExecutivePanel h3 {
+  font-size: 24px;
+}
+
+.v4ExecutivePanel div {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.32fr) minmax(150px, 0.28fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-height: 52px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.v4ExecutivePanel span,
+.v4ExecutivePanel small,
+.v4AuditItem small,
+.v4OperationGrid small,
+.brokerDocFacts span,
+.brokerDocFacts small,
+.v4MetricLine small {
+  color: var(--muted);
+}
+
+.v4AuditList,
+.brokerDocFacts {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.v4AuditItem {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.34fr) minmax(160px, 0.28fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-height: 58px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.v4OperationGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.v4OperationGrid div {
+  display: grid;
+  gap: 6px;
+  min-height: 112px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.v4OperationGrid span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.v4OperationGrid strong {
+  font-size: 22px;
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+
+.v4MetricInventory {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 18px;
+}
+
+.v4MetricGroups {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 3px;
+}
+
+.v4MetricGroup {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.v4MetricGroup > strong {
+  min-height: 30px;
+}
+
+.v4MetricLine {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  min-height: 78px;
+  padding: 10px 40px 10px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.16);
+  color: var(--text);
+  text-align: left;
+}
+
+.v4MetricLine b {
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.v4MetricActions {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  display: grid;
+  gap: 5px;
+}
+
+.v4MetricActions .infoButton {
+  position: static;
+}
+
+.brokerDocFacts div {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.brokerMcpExample {
+  border-color: rgba(25, 198, 208, 0.24);
+}
+
+.brokerToolExamples code,
+.brokerResponseExamples code {
+  white-space: pre-wrap;
+}
+
+.brokerResponseExamples {
+  margin-top: 10px;
 }
 
 .categoryFilters {
@@ -3490,6 +3739,13 @@ circle.negative {
   .metricRunway,
   .v2Grid,
   .labHero,
+  .v4Hero,
+  .v4HeroMetrics,
+  .v4ExecutiveGrid,
+  .v4Grid,
+  .v4ExecutivePanel div,
+  .v4AuditItem,
+  .v4OperationGrid,
   .infoHero,
   .infoLayout,
   .blueprintGrid,
