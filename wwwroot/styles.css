@@ -1122,6 +1122,13 @@ p {
   background: linear-gradient(180deg, var(--cyan), var(--blue));
 }
 
+.diagramInlineDetail,
+.flowInlineDetail,
+.learningInlineDetail,
+.opsInlineDetail {
+  display: none;
+}
+
 .architectureBlueprint {
   display: grid;
   gap: 16px;
@@ -1293,6 +1300,10 @@ p {
 
 .blueprintDetail strong {
   margin-top: 8px;
+}
+
+.blueprintInlineDetail {
+  display: none;
 }
 
 .mcpArchitecture {
@@ -3777,6 +3788,7 @@ circle.negative {
   .homeHero,
   .homeInfoCards,
   .reportFilters,
+  .pageDiagram,
   .cockpitHero,
   .changeGrid,
   .grid.two,
@@ -3833,6 +3845,100 @@ circle.negative {
     justify-self: end;
   }
 
+  .diagramRail {
+    grid-template-columns: 1fr;
+  }
+
+  .diagramRail button::after {
+    display: none;
+  }
+
+  .diagramMiniChart {
+    display: none;
+  }
+
+  .flowPanel {
+    position: static;
+  }
+
+  .flowPanel .flowDetail,
+  .learningPanel > .learningDetail,
+  .opsGrid > .opsDetail {
+    display: none;
+  }
+
+  .diagramInlineDetail,
+  .flowInlineDetail,
+  .learningInlineDetail,
+  .opsInlineDetail {
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid rgba(25, 198, 208, 0.24);
+    border-radius: 16px;
+    background:
+      linear-gradient(135deg, rgba(25, 198, 208, 0.12), rgba(75, 116, 255, 0.08)),
+      rgba(15, 23, 42, 0.74);
+  }
+
+  .diagramInlineDetail,
+  .flowInlineDetail {
+    margin-top: -2px;
+  }
+
+  .diagramInlineDetail > span,
+  .flowInlineDetail > span {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 12px;
+    background: rgba(25, 198, 208, 0.13);
+    color: var(--cyan);
+    font-weight: 900;
+  }
+
+  .diagramInlineDetail strong,
+  .flowInlineDetail strong {
+    font-size: 20px;
+  }
+
+  .diagramInlineDetail p,
+  .flowInlineDetail p,
+  .learningInlineDetail p,
+  .opsInlineDetail p {
+    color: var(--muted);
+  }
+
+  .learningInlineDetail {
+    border-color: rgba(245, 189, 79, 0.28);
+    background:
+      linear-gradient(135deg, rgba(245, 189, 79, 0.13), rgba(255, 79, 97, 0.07)),
+      rgba(15, 23, 42, 0.74);
+  }
+
+  .learningInlineDetail > span,
+  .opsInlineDetail > span {
+    color: var(--cyan);
+    font-size: 12px;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .learningInlineDetail h3 {
+    font-size: clamp(22px, 7vw, 30px);
+    line-height: 1.04;
+  }
+
+  .opsInlineDetail {
+    border-color: rgba(25, 198, 208, 0.26);
+  }
+
+  .opsInlineDetail h3 {
+    font-size: clamp(24px, 7.4vw, 34px);
+    line-height: 1;
+  }
+
   .blueprintCanvas {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3851,6 +3957,50 @@ circle.negative {
     left: auto !important;
     width: 100%;
     min-width: 0;
+  }
+
+  .blueprintGrid > .blueprintDetail {
+    display: none;
+  }
+
+  .blueprintInlineDetail {
+    display: grid;
+    grid-column: 1 / -1;
+    gap: 10px;
+    margin-top: -2px;
+    padding: 14px;
+    border: 1px solid rgba(34, 197, 94, 0.26);
+    border-radius: 18px;
+    background:
+      linear-gradient(135deg, rgba(34, 197, 94, 0.14), rgba(59, 130, 246, 0.08)),
+      rgba(15, 23, 42, 0.82);
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.2);
+  }
+
+  .blueprintInlineDetail .uiIcon {
+    width: 38px;
+    height: 38px;
+    border-radius: 14px;
+  }
+
+  .blueprintInlineDetail span {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .blueprintInlineDetail h3 {
+    font-size: clamp(22px, 7vw, 30px);
+    line-height: 1;
+  }
+
+  .blueprintInlineDetail p {
+    color: var(--muted);
+  }
+
+  .blueprintInlineDetail strong {
+    margin-top: 4px;
   }
 
   .agentHandoffHeader,

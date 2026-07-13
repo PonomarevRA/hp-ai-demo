@@ -1624,7 +1624,7 @@ function InfoPage({ page, pageKey, go, openFormula }) {
           h(McpArchitectureSections, { key: "mcp-sections" }),
           h(AgentReadableArchitectureContext, { key: "ai-architecture-context" })
         ]
-      : h(PageDiagram, { page, pageKey, activeStep, setActiveStep }),
+      : null,
     h("div", { className: "infoLayout", "data-metrika-block": "info-content" },
       h("div", { className: "infoCardGrid" },
         page.cards.map((card, index) => h("article", { className: "explainCard", key: card.title },
@@ -1639,20 +1639,28 @@ function InfoPage({ page, pageKey, go, openFormula }) {
           h("span", null, "нажмите на шаг")
         ),
         h("div", { className: "flowSteps" },
-          page.steps.map((item, index) => h("button", {
-            key: item[1],
-            className: index === activeStep ? "active" : "",
-            onClick: () => setActiveStep(index),
-          },
-            h(Icon, { name: CARD_ICONS[index % CARD_ICONS.length] }),
-            h("span", null, item[0]),
-            h("strong", null, item[1])
-          ))
+          page.steps.map((item, index) => {
+            const isActive = index === activeStep;
+            const inlineDetailId = `${pageKey}-flow-detail-${index}`;
+            return h(React.Fragment, { key: item[1] },
+              h("button", {
+                className: isActive ? "active" : "",
+                onClick: () => setActiveStep(index),
+                "aria-expanded": isActive ? "true" : "false",
+                "aria-controls": inlineDetailId,
+              },
+                h(Icon, { name: CARD_ICONS[index % CARD_ICONS.length] }),
+                h("span", null, item[0]),
+                h("strong", null, item[1])
+              ),
+              isActive && h("div", { id: inlineDetailId, className: "flowInlineDetail" },
+                h(StepDetailContent, { step: item })
+              )
+            );
+          })
         ),
         h("div", { className: "flowDetail" },
-          h("span", null, step[0]),
-          h("strong", null, step[1]),
-          h("p", null, step[2])
+          h(StepDetailContent, { step })
         )
       )
     ),
@@ -1691,18 +1699,69 @@ function architecturePath(source, target) {
   return `M ${start.x} ${start.y} C ${start.x + curve * direction} ${start.y}, ${end.x - curve * direction} ${end.y}, ${end.x} ${end.y}`;
 }
 
+function BlueprintDetailContent({ block }) {
+  return [
+    h(Icon, { key: "icon", name: block.icon }),
+    h("span", { key: "layer" }, block.layer),
+    h("h3", { key: "title" }, block.title),
+    h("p", { key: "text" }, block.text),
+    h("strong", { key: "why-title" }, "Зачем нужен"),
+    h("p", { key: "why" }, block.why)
+  ];
+}
+
+function StepDetailContent({ step }) {
+  return [
+    h("span", { key: "index" }, step[0]),
+    h("strong", { key: "title" }, step[1]),
+    h("p", { key: "text" }, step[2])
+  ];
+}
+
+function AntiPatternDetailContent({ item }) {
+  return [
+    h(Icon, { key: "icon", name: "warning" }),
+    h("span", { key: "label" }, "Неудачный подход"),
+    h("h3", { key: "title" }, item.title),
+    h("p", { key: "bad" }, item.bad),
+    h("strong", { key: "better-title" }, "Как лучше"),
+    h("p", { key: "better" }, item.better)
+  ];
+}
+
+function OpsDetailContent({ item }) {
+  return [
+    h(Icon, { key: "icon", name: "pulse" }),
+    h("span", { key: "metric" }, item.metric),
+    h("h3", { key: "title" }, item.title),
+    h("p", { key: "text" }, item.text),
+    h("strong", { key: "ai-title" }, "Если расчеты внутри ИИ"),
+    h("p", { key: "ai-only" }, item.aiOnly)
+  ];
+}
+
 function PageDiagram({ page, pageKey, activeStep, setActiveStep }) {
   return h("section", { className: `pageDiagram ${pageKey}` },
     h("div", { className: "diagramRail" },
-      page.steps.map((step, index) => h("button", {
-        key: step[1],
-        className: index === activeStep ? "active" : "",
-        onClick: () => setActiveStep(index),
-      },
-        h(Icon, { name: CARD_ICONS[index % CARD_ICONS.length] }),
-        h("span", null, step[1]),
-        h("small", null, step[0])
-      ))
+      page.steps.map((step, index) => {
+        const isActive = index === activeStep;
+        const inlineDetailId = `${pageKey}-diagram-detail-${index}`;
+        return h(React.Fragment, { key: step[1] },
+          h("button", {
+            className: isActive ? "active" : "",
+            onClick: () => setActiveStep(index),
+            "aria-expanded": isActive ? "true" : "false",
+            "aria-controls": inlineDetailId,
+          },
+            h(Icon, { name: CARD_ICONS[index % CARD_ICONS.length] }),
+            h("span", null, step[1]),
+            h("small", null, step[0])
+          ),
+          isActive && h("div", { id: inlineDetailId, className: "diagramInlineDetail" },
+            h(StepDetailContent, { step })
+          )
+        );
+      })
     ),
     h("div", { className: "diagramMiniChart" },
       page.steps.map((step, index) => h("span", {
@@ -1742,25 +1801,30 @@ function ArchitectureBlueprint() {
             });
           })
         ),
-        ARCHITECTURE_BLOCKS.map((block) => h("button", {
-          key: block.id,
-          className: `blueprintNode ${block.id === activeId ? "active" : ""}`,
-          style: { left: `${block.x}%`, top: `${block.y}%` },
-          onClick: () => setActiveId(block.id),
-        },
-          h("em", { className: "nodeBadge" }, block.step),
-          h(Icon, { name: block.icon }),
-          h("span", null, block.layer),
-          h("strong", null, block.title)
-        ))
+        ARCHITECTURE_BLOCKS.map((block) => {
+          const isActive = block.id === activeId;
+          const inlineDetailId = `blueprint-inline-detail-${block.id}`;
+          return h(React.Fragment, { key: block.id },
+            h("button", {
+              className: `blueprintNode ${isActive ? "active" : ""}`,
+              style: { left: `${block.x}%`, top: `${block.y}%` },
+              onClick: () => setActiveId(block.id),
+              "aria-expanded": isActive ? "true" : "false",
+              "aria-controls": inlineDetailId,
+            },
+              h("em", { className: "nodeBadge" }, block.step),
+              h(Icon, { name: block.icon }),
+              h("span", null, block.layer),
+              h("strong", null, block.title)
+            ),
+            isActive && h("div", { id: inlineDetailId, className: "blueprintInlineDetail" },
+              h(BlueprintDetailContent, { block })
+            )
+          );
+        })
       ),
       h("aside", { className: "blueprintDetail" },
-        h(Icon, { name: active.icon }),
-        h("span", null, active.layer),
-        h("h3", null, active.title),
-        h("p", null, active.text),
-        h("strong", null, "Зачем нужен"),
-        h("p", null, active.why)
+        h(BlueprintDetailContent, { block: active })
       )
     )
   );
@@ -1965,19 +2029,24 @@ function AntiPatternPanel() {
     h("div", { className: "learningList" },
       h("p", { className: "eyebrow" }, "anti-patterns"),
       h("h2", null, "Как не надо делать и почему"),
-      INFO_ANTI_PATTERNS.map((pattern, index) => h("button", {
-        key: pattern.title,
-        className: index === active ? "active" : "",
-        onClick: () => setActive(index),
-      }, h(Icon, { name: index === active ? "warning" : "cut" }), pattern.title))
+      INFO_ANTI_PATTERNS.map((pattern, index) => {
+        const isActive = index === active;
+        const inlineDetailId = `anti-pattern-detail-${index}`;
+        return h(React.Fragment, { key: pattern.title },
+          h("button", {
+            className: isActive ? "active" : "",
+            onClick: () => setActive(index),
+            "aria-expanded": isActive ? "true" : "false",
+            "aria-controls": inlineDetailId,
+          }, h(Icon, { name: isActive ? "warning" : "cut" }), pattern.title),
+          isActive && h("div", { id: inlineDetailId, className: "learningInlineDetail" },
+            h(AntiPatternDetailContent, { item: pattern })
+          )
+        );
+      })
     ),
     h("div", { className: "learningDetail" },
-      h(Icon, { name: "warning" }),
-      h("span", null, "Неудачный подход"),
-      h("h3", null, item.title),
-      h("p", null, item.bad),
-      h("strong", null, "Как лучше"),
-      h("p", null, item.better)
+      h(AntiPatternDetailContent, { item })
     )
   );
 }
@@ -2039,23 +2108,28 @@ function SupportOpsPanel() {
     ),
     h("div", { className: "opsGrid" },
       h("div", { className: "opsTabs" },
-        OPS_BLOCKS.map((block, index) => h("button", {
-          key: block.title,
-          className: index === active ? "active" : "",
-          onClick: () => setActive(index),
-        },
-          h(Icon, { name: CARD_ICONS[index % CARD_ICONS.length] }),
-          h("span", null, block.metric),
-          h("strong", null, block.title)
-        ))
+        OPS_BLOCKS.map((block, index) => {
+          const isActive = index === active;
+          const inlineDetailId = `ops-detail-${index}`;
+          return h(React.Fragment, { key: block.title },
+            h("button", {
+              className: isActive ? "active" : "",
+              onClick: () => setActive(index),
+              "aria-expanded": isActive ? "true" : "false",
+              "aria-controls": inlineDetailId,
+            },
+              h(Icon, { name: CARD_ICONS[index % CARD_ICONS.length] }),
+              h("span", null, block.metric),
+              h("strong", null, block.title)
+            ),
+            isActive && h("article", { id: inlineDetailId, className: "opsInlineDetail" },
+              h(OpsDetailContent, { item: block })
+            )
+          );
+        })
       ),
       h("article", { className: "opsDetail" },
-        h(Icon, { name: "pulse" }),
-        h("span", null, item.metric),
-        h("h3", null, item.title),
-        h("p", null, item.text),
-        h("strong", null, "Если расчеты внутри ИИ"),
-        h("p", null, item.aiOnly)
+        h(OpsDetailContent, { item })
       )
     )
   );
