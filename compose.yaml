@@ -1,6 +1,5 @@
 services:
   historic-portfolio-ai:
-    image: historic-portfolio-ai
     build:
       context: .
       dockerfile: Dockerfile
