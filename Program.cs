@@ -19,6 +19,8 @@ var app = builder.Build();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
+app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+
 app.MapPost("/api/analyze", async (HttpRequest request, MoexIssClient moex, CancellationToken cancellationToken) =>
 {
     if (!request.HasFormContentType)
