@@ -18,5 +18,7 @@ RUN dotnet publish "./historic-portfolio-ai.csproj" -c $BUILD_CONFIGURATION -o /
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
-USER $APP_UID
-ENTRYPOINT ["sh", "-c", "dotnet historic-portfolio-ai.dll --urls http://0.0.0.0:${PORT:-8080}"]
+USER $APP_UIDEXPOSE 8080
+             
+ENV ASPNETCORE_URLS=http://+:8080
+ENTRYPOINT ["dotnet", "HpAiDemo.dll"]
