@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    entrypoint: ["dotnet", "historic-portfolio-ai.dll"]
     environment:
       PORT: 8080
       ASPNETCORE_HTTP_PORTS: 8080
