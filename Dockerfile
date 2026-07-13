@@ -21,5 +21,4 @@ COPY --from=publish /app/publish .
 USER $APP_UID
 
 ENV ASPNETCORE_HTTP_PORTS=8080
-ENV ASPNETCORE_URLS=http://0.0.0.0:8080
 ENTRYPOINT ["dotnet", "historic-portfolio-ai.dll"]
